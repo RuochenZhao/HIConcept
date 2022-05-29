@@ -150,7 +150,7 @@ def load_data_text(args):
 
 def load_cls_model(args, device, data):
     print('args.pretrained: ', args.pretrained)
-    if args.pretrained == False:
+    if args.pretrained == False and args.dataset not in ['agnews', 'yahoo_answers']:
         if 'bert' in args.model_name:
             tokenizer, (x_train, y_train), (x_val, y_val), (train_masks, val_masks) = data
             train_data = TensorDataset(torch.from_numpy(x_train), train_masks, torch.from_numpy(y_train.astype('int64')))

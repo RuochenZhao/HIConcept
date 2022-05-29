@@ -1,6 +1,31 @@
 # CausalConcept
 This is the code repository for paper 'Explaining Language Models with Causal Concepts'
 
+Running instructions:
+inside src/, run  `python main.py' with the following arguments:
+1. To adjust which dataset: --dataset=imdb / news / toy
+    - For toy dataset: --generate_toy_data to re-generate the dataset, --p=0.7 to adjust covariance probability
+2. CLS model: --model_name=bert / cnn
+    - For toy dataset, only cnn is supported
+    - --pretrained if you have already pretrained the CLS model (you could pass this for news dataset as we load the pretrained version from huggingface: https://huggingface.co/fabriceyhc/bert-base-uncased-ag_news)
+    - --do_inference if you have not saved inferred results
+3. Concept model: --train_topic_model if you have not trained it
+    - overall_method=two_stage / conceptshap / BCVAE / kmeans / pca
+    - n_concept=10 to adjust number of concepts
+    - --flip_loss_reg=0.1 to adjust causal loss coefficient, --concept_sim_reg=0.1 and --concept_far_reg=0.1 to adjust regularizer loss coefficients
+    - --lr=3e-4; --epochs=10; --batch_size=128 to adjust training arguments
+    - --layer_idx=-1 to adjust which layer to interpret at 
+4. post-hoc analysis:
+    - postprocess: postprocess to get rid of concepts with causal effect of 0
+    - one_correlated_dim: only enforce the causality loss on previous dimensions (excluding last one)
+    - visualize=txt: generate the most common words from a topic
+    - visualize_wordcloud: generate wordclouds from the topics
+    - eval_causal_effect: evaluate causal effects of trained model
+
+For example: To run AG-News with BERT, use our concept model on the last layer, and evaluate its causal effect and visualize, you could run:
+python main.py --pretrained --do_inference --train_topic_model --eval_causal_effect --visualize=txt
+
+
 File structure:
 1. src/: source code
     - main.py: main running scripts that loads data, classification model, and topic model with evaluation.

@@ -36,7 +36,7 @@ parser.add_argument("--cov", dest="cov", type=bool, default=True)
 parser.add_argument("--p", dest="p", type=float, default=0.65)
 parser.add_argument("--generate_toy_data", action='store_true')
 parser.add_argument("--n", dest="n", type=int, default=10000)
-parser.add_argument("--toy_data_save_dir", type = str, default = "../DATASETS/toy_data/")
+parser.add_argument("--toy_data_save_dir", type = str, default = "../../DATASETS/toy_data/")
 # CLS model
 parser.add_argument("--model_name", dest="model_name", type=str,
                     default='bert', choices=['cnn', 'lstm', 'bert', 'distilbert'])
@@ -84,9 +84,9 @@ parser.add_argument("--thres", dest="thres", type=float,
 parser.add_argument("--lr", dest="lr", type=float,
                     default=3e-4) # can use 3e-2 instead
 parser.add_argument("--layer_idx", dest="layer_idx", type=int,
-                    default=-1) # can use 3e-2 instead
+                    default=-1) 
 parser.add_argument("--extra_layers", dest="extra_layers", type=int,
-                    default=0) # can use 3e-2 instead
+                    default=0) 
 
 # POST-HOC ANALYSIS
 parser.add_argument("--eval_causal_effect", action='store_true')
@@ -119,10 +119,10 @@ if args.dataset == 'toy':
     args.model_name = 'cnn'
     path = os.getcwd()
     if args.cov:
-        args.dir = f'{toy_data_save_dir}cov/{args.p}'
+        args.dir = f'{args.toy_data_save_dir}cov/{args.p}'
         args.save_dir = f'../models/toy/cov/{args.p}/'
     else:
-        args.dir = f'{toy_data_save_dir}no_cov'
+        args.dir = f'{args.toy_data_save_dir}no_cov'
         args.save_dir = '../models/toy/no_cov/'
     if os.path.isdir(args.dir):
         os.chdir(args.dir)
@@ -157,11 +157,6 @@ if args.short_sentences == True:
     short = 'fragment_'
 else:
     short = ''
-# print(f'{len(list(model.modules()))} modules')
-# print(list(model.modules()))
-# raise Exception('end')
-# print('para: ', list(model.modules())[-1].weight)
-# print('model_dir: ', args.model_save_dir)
 
 args.divide_bert = False
 # change according to layer idx
@@ -194,7 +189,6 @@ if not args.divide_bert:
     print('acc: ', acc)
     acc = acc / len(y_pred_train)
     print('acc: ', acc)
-    # raise Exception('end')
 
     if args.fast:
         f_train = f_train[:args.fast]
