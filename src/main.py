@@ -172,6 +172,8 @@ elif args.model_name == 'bert':
 
 if 'bert' in args.model_name:
     tokenizer, (x_train, y_train), (x_val, y_val), (train_masks, val_masks) = data
+elif args.dataset=='toy':
+    (x_train, y_train), (x_val, y_val) = data
 else:
     tokenizer, (x_train, y_train), (x_val, y_val) = data
 

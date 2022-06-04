@@ -111,9 +111,6 @@ def get_exp(i, x_val, y_val, val_mask, t, tokenizer, device, model, explanations
     y=y_val[i]
     input_ids = torch.from_numpy(x).unsqueeze(0).to(device)
     attention_mask = val_mask[i].unsqueeze(0).to(device)
-    # true class is positive - 1
-    true_class = y
-    output = model(input_ids=input_ids, attention_mask=attention_mask)[0]
     # generate an explanation for the input
     # index controls the concept to generate according to
     expl = explanations.generate_LRP(input_ids=input_ids, attention_mask=attention_mask, start_layer=0, index = t)[0]
@@ -125,7 +122,12 @@ def get_exp(i, x_val, y_val, val_mask, t, tokenizer, device, model, explanations
 def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_masks, args, save_file, device, overall_model = None):
     # change the model to be enabled with relprop
     if not args.divide_bert:
-        model = BertForSequenceClassification.from_pretrained(args.model_save_dir).to(device)
+        if args.dataset == 'news':
+            model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-ag_news').to(device)
+        elif args.dataset == 'yahoo_answers':
+            model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-yahoo_answers_topics').to(device)
+        else:
+            model = BertForSequenceClassification.from_pretrained(args.model_save_dir).to(device)
     model.eval()
     # write the topic model to a sequential classifier
     linearlayer1 = Linear(768, args.n_concept, bias = False)

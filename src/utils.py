@@ -201,14 +201,11 @@ def get_sentence_activation(model, loader, device, args):
     # raise Exception('end')
 
   def add_activation_hook(model, layer_idx):
-    # all_modules_list = list(model.modules())
-    # module = all_modules_list[layer_idx]
-    bertlayers = [i for i in list(model.modules()) if isinstance(i, transformers.models.bert.modeling_bert.BertLayer)]
-    module = bertlayers[layer_idx]
-    print('module: ', module)
+    all_modules_list = list(model.modules())
+    module = all_modules_list[layer_idx]
     module.register_forward_hook(extract_activation_hook)
 
-  add_activation_hook(model, layer_idx=args.layer_idx)
+  add_activation_hook(model, layer_idx=-2)
 
   print("running inference..")
   run_model(model, loader, device) # run the whole model
@@ -227,7 +224,10 @@ def inference(data, model, classifier, device, args):
             train_loader = DataLoader(train_data, shuffle=False, batch_size=args.batch_size, drop_last=False)
             valid_loader = DataLoader(valid_data, shuffle=False, batch_size=args.batch_size, drop_last=False)
         else:
-            tokenizer, (x_train, y_train), (x_val, y_val) = data
+            if args.dataset=='toy':
+                (x_train, y_train), (x_val, y_val) = data
+            else:
+                _, (x_train, y_train), (x_val, y_val) = data
             train_data = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
             valid_data = TensorDataset(torch.from_numpy(x_val), torch.from_numpy(y_val))
             #do not shuffle to have the correct inferred data
@@ -262,7 +262,10 @@ def inference(data, model, classifier, device, args):
                 with tqdm(train_loader, desc="train") as tbatch:
                     for i, (samples, targets) in enumerate(tbatch):
                         samples = samples.to(device).long()
-                        if args.model_name == 'cnn':
+                        if args.dataset == 'toy':
+                            predictions = model.encode(samples.float())
+                            targets = classifier(predictions)
+                        elif args.model_name == 'cnn':
                             # predictions = encoder(samples)
                             # targets = classifier(predictions)
                             meaned, predictions = model.encode(samples)
@@ -275,7 +278,10 @@ def inference(data, model, classifier, device, args):
                 with tqdm(valid_loader, desc="valid") as tbatch:
                     for i, (samples, targets) in enumerate(tbatch):
                         samples = samples.to(device).long()
-                        if args.model_name == 'cnn':
+                        if args.dataset == 'toy':
+                            predictions = model.encode(samples.float())
+                            targets = classifier(predictions)
+                        elif args.model_name == 'cnn':
                             # predictions = encoder(samples)
                             # targets = classifier(predictions)
                             meaned, predictions = model.encode(samples)
@@ -1111,6 +1117,7 @@ def eval_causal_effect_model(topic_model, model, classifier, device, f_val, y_va
         new_y_pred = y_pred.max(1).indices
         original_acc = sum(new_y_pred.numpy() == y_val)
     else:
+        new_y_pred = y_pred
         original_acc = (new_y_pred.cpu().detach().numpy().squeeze().round() == y_val).sum().item()
     print('1original accuracy: {} \n'.format(original_acc))
     if toy == True:

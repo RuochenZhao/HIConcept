@@ -22,8 +22,20 @@ inside src/, run  `python main.py' with the following arguments:
     - visualize_wordcloud: generate wordclouds from the topics
     - eval_causal_effect: evaluate causal effects of trained model
 
-For example: To run AG-News with BERT, use our concept model on the last layer, and evaluate its causal effect and visualize, you could run:
+For example: To run AG-News with BERT, use our concept model on the last layer, and evaluate its causal effect and visualize, you could run: (--pretrained because we load the pretrained huggingface model)
+
 python main.py --pretrained --do_inference --train_topic_model --eval_causal_effect --visualize=txt
+
+To run IMDB with BERT, use our concept model on the last layer, and evaluate its causal effect and visualize, you could run:
+
+python main.py --do_inference --train_topic_model --eval_causal_effect --visualize=txt --dataset=imdb
+
+To run with CNN model, just add --model_name=cnn
+
+To run on the toy dataset, use: (when running for the first time, it will automatically create the toy dataset under "../../DATASETS/toy_data/" with 10000 images, you could adjust the number of images by specifying '--n={number_of_your_choice}')
+
+python main.py --model_name=cnn --do_inference --train_topic_model --eval_causal_effect --visualize=txt --dataset=toy
+
 
 
 File structure:
@@ -35,10 +47,11 @@ File structure:
     - text_helper.py: helper functions for text experiments, such as loading datasets, loading text classification models, etc.
     - visualize.py: functions to visualize topics, including gradcam and BERT visualization
     - bcvae.py & elbo_decomposition.py & lib/: implementation of Beta-TCVAE models from https://github.com/rtqichen/beta-tcvae
-    - BERT_explainability/: folder that includes helper functions to achieve BERT transformer visualization, taken from https://github.com/hila-chefer/Transformer-Explainability
+    - BERT_explainability/ & BERT_rationale_benchmark: folder that includes helper functions to achieve BERT transformer visualization, taken from https://github.com/hila-chefer/Transformer-Explainability
 2. analysis/: code used to analyze the results
     - analyze_csv.py: script used to analyze human evaluation results, including agreement calculations, etc.
     - wordcloud.ipynb: script used to generate wordcloud images in the appendix.
     - produce_html_examples.py: generates human evaluation examples
 3. models/: directory for storing classification models and topic models, after training, cls model will be stored in directory: models/{DATASET}/{CLS_MODEL}/cls_model.pkl, topic model will be stored in directory:models/{DATASET}/{CLS_MODEL}/{TOPIC_MODEL}/topic_model_{TOPIC_MODEL}.pkl. Both will be accompanied by a training graph with loss and accuracy.
 4. human_eval_examples/: directory to save generated human evaluation examples.
+5. environment.yml: file to create the conda environment. Run ' conda env create -f environment.yml'

@@ -150,7 +150,7 @@ def load_data_text(args):
 
 def load_cls_model(args, device, data):
     print('args.pretrained: ', args.pretrained)
-    if args.pretrained == False and args.dataset not in ['agnews', 'yahoo_answers']:
+    if args.pretrained == False and args.dataset not in ['news', 'yahoo_answers']:
         if 'bert' in args.model_name:
             tokenizer, (x_train, y_train), (x_val, y_val), (train_masks, val_masks) = data
             train_data = TensorDataset(torch.from_numpy(x_train), train_masks, torch.from_numpy(y_train.astype('int64')))
@@ -167,10 +167,7 @@ def load_cls_model(args, device, data):
                 model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
         
         else:
-            if args.dataset=='20news':
-                tokenizer, (x_train, y_train), (x_val, y_val) = data
-            else:
-                (x_train, y_train), (x_val, y_val) = data
+            _, (x_train, y_train), (x_val, y_val) = data
             # LOAD INTO PYTORCH FORMAT
             print('x_train.shape: ', x_train.shape)
             train_data = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
@@ -264,7 +261,7 @@ def load_cls_model(args, device, data):
                         targets = targets.to(device)#100
                         model.zero_grad()
                         predictions = model(samples) #100, n_classes
-                        loss = criterion(predictions.squeeze(), targets.long())
+                        loss = criterion(predictions.squeeze(), targets.float())
                     if 'bert' in args.model_name:
                         predictions = F.softmax(predictions, dim = 1)
                         # print('predictions: ', predictions)
@@ -328,7 +325,7 @@ def load_cls_model(args, device, data):
                             targets = targets.to(device)
                             model.zero_grad()
                             predictions = model(samples)
-                            loss = criterion(predictions.squeeze(), targets.long())
+                            loss = criterion(predictions.squeeze(), targets.float())
                         val_losses.append(loss)
                         if 'bert' in args.model_name:
                             predictions = F.softmax(predictions, dim = 1)
@@ -361,7 +358,7 @@ def load_cls_model(args, device, data):
         plt.savefig(args.save_dir +'/cls_model_training.png')
     else:
         if args.model_name == 'bert':
-            if args.dataset == 'agnews':
+            if args.dataset == 'news':
                 model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-ag_news')
             elif args.dataset == 'yahoo_answers':
                 model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-yahoo_answers_topics')

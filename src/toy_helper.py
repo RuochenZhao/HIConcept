@@ -15,9 +15,10 @@ from skimage.segmentation import felzenszwalb
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+from torch.utils.data import TensorDataset, DataLoader
 from PIL import Image
 from matplotlib import cm
-from helper import CNN_cls
+from cls_models import CNN_cls
 from torch import nn
 import torch
 from tqdm import tqdm, trange
@@ -733,7 +734,7 @@ def visualize_model(x, f_train, topic_vec, graph_save_folder, n_concept, method,
     print('topic_vec_n.shape: ', topic_vec_n.shape) #64, 5
     topic_prob = np.dot(f_train_n,topic_vec_n) #100, 4, 4, 5
     print('topic_prob.shape: ', topic_prob.shape)
-    raise Exception('end')
+    # raise Exception('end')
   n_size = 4 #the final size
   imgs = []
   for i in range(n_concept):
