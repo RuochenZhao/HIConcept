@@ -14,7 +14,7 @@ inside src/, run  `python main.py' with the following arguments:
     - n_concept=10 to adjust number of concepts
     - --flip_loss_reg=0.1 to adjust causal loss coefficient, --concept_sim_reg=0.1 and --concept_far_reg=0.1 to adjust regularizer loss coefficients
     - --lr=3e-4; --epochs=10; --batch_size=128 to adjust training arguments
-    - --layer_idx=-1 to adjust which layer to interpret at 
+    - --layer_idx=-1 to adjust which layer to interpret at (this only supports BERT models currently)
 4. post-hoc analysis:
     - postprocess: postprocess to get rid of concepts with causal effect of 0
     - one_correlated_dim: only enforce the causality loss on previous dimensions (excluding last one)
@@ -41,7 +41,7 @@ python main.py --model_name=cnn --do_inference --train_topic_model --eval_causal
 File structure:
 1. src/: source code
     - main.py: main running scripts that loads data, classification model, and topic model with evaluation.
-    - concept_models.py: our implementation of concept models
+    - concept_models.py: our implementation of concept models, we looked at original conceptSHAP repo: https://github.com/chihkuanyeh/concept_exp; and Berkeley's version: https://github.com/arnav-gudibande/conceptSHAP as references.
     - cls_models.py: our implementation of CNN-based classification models
     - toy_helper.py: helper functions for toy dataset, such as creating images, datasets, etc.
     - text_helper.py: helper functions for text experiments, such as loading datasets, loading text classification models, etc.
