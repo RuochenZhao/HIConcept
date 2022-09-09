@@ -39,6 +39,7 @@ stop_word_list = ["i", "me", "my", "myself", "we", "our", "ours", "ourselves", "
                   "only", "own", "same", "so", "than", "very", "s", "t", "can", "will", "just", "don", "should", "now",
                   "one", "it's", "br", "<PAD>", "<START>", "<UNK>", "<UNUSED>" "would", "could", "also", "may", "many", "go", "another",
                   "want", "two", "actually", "every", "thing", "know", "made", "get", "something", "back", "though"]
+
 def seed_everything(args):
     random.seed(args.seed)
     os.environ['PYTHONASSEED'] = str(args.seed)
@@ -48,9 +49,10 @@ def seed_everything(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
 
-def get_pca_concept(f_train, n_concept):
+def get_pca_concept(f_train, n_concept, args):
+    args.logger.info('getting pca concepts')
     pca = PCA(n_components = n_concept)
-    print('f_train.shape: ', f_train.shape)
+    args.logger.info('f_train.shape: ', f_train.shape)
     if f_train.dim() == 4: #toy dataset
         f_train = f_train.flatten(start_dim = 1, end_dim = -1)
     elif f_train.dim()>2:
@@ -165,11 +167,11 @@ def make_sliding_window(x, y, save_dir):
 
     return windows, labels
     
-def run_model(_model, loader, device):
+def run_model(_model, loader, device, logger):
   ce_loss = nn.CrossEntropyLoss()
 
   all_losses = []
-  for batch in tqdm(loader):
+  for batch in loader:
     # b_input_ids,b_labels = batch
     # b_input_ids = b_input_ids.to(device)
     # b_labels = b_labels.to(device)
@@ -186,7 +188,7 @@ def run_model(_model, loader, device):
         # print('predictions[:10]: ', predictions[:10])
         loss = results[0]
         all_losses.append(loss.item())
-  print("inference loss:", np.mean(np.array(all_losses)))
+  logger.info("inference loss:", np.mean(np.array(all_losses)))
 
 # to help with bert inference
 def get_sentence_activation(model, loader, device, args):
@@ -207,10 +209,10 @@ def get_sentence_activation(model, loader, device, args):
 
   add_activation_hook(model, layer_idx=-2)
 
-  print("running inference..")
-  run_model(model, loader, device) # run the whole model
+  args.logger.info("running inference..")
+  run_model(model, loader, device, args.logger) # run the whole model
   res = np.concatenate(extracted_activations, axis=0)
-  print('res.shape: ', res.shape)
+  args.logger.info('res.shape: ', res.shape)
   return res
 
 
@@ -259,55 +261,47 @@ def inference(data, model, classifier, device, args):
             # if args.model_name == 'cnn':
             #     # encoder = torch.nn.Sequential(*(list(model.encoder)[:2*args.layer_idx+1]))
             with torch.no_grad():
-                with tqdm(train_loader, desc="train") as tbatch:
-                    for i, (samples, targets) in enumerate(tbatch):
-                        samples = samples.to(device).long()
-                        if args.dataset == 'toy':
-                            predictions = model.encode(samples.float())
-                            targets = classifier(predictions)
-                        elif args.model_name == 'cnn':
-                            # predictions = encoder(samples)
-                            # targets = classifier(predictions)
-                            meaned, predictions = model.encode(samples)
-                            targets = classifier(meaned)
-                        else:
-                            predictions = model.encode(samples)
-                            targets = classifier(predictions)
-                        f_train.append(predictions.cpu().detach())
-                        y_pred_train.append(targets.cpu().detach())
-                with tqdm(valid_loader, desc="valid") as tbatch:
-                    for i, (samples, targets) in enumerate(tbatch):
-                        samples = samples.to(device).long()
-                        if args.dataset == 'toy':
-                            predictions = model.encode(samples.float())
-                            targets = classifier(predictions)
-                        elif args.model_name == 'cnn':
-                            # predictions = encoder(samples)
-                            # targets = classifier(predictions)
-                            meaned, predictions = model.encode(samples)
-                            targets = classifier(meaned)
-                        else:
-                            predictions = model.encode(samples)
-                            targets = classifier(predictions)
-                        f_val.append(predictions.cpu().detach())
-                        y_pred_val.append(targets.cpu().detach())
+                for i, (samples, targets) in enumerate(train_loader):
+                    samples = samples.to(device).long()
+                    if args.dataset == 'toy':
+                        predictions = model.encode(samples.float())
+                        targets = classifier(predictions)
+                    elif args.model_name == 'cnn':
+                        # predictions = encoder(samples)
+                        # targets = classifier(predictions)
+                        meaned, predictions = model.encode(samples)
+                        targets = classifier(meaned)
+                    else:
+                        predictions = model.encode(samples)
+                        targets = classifier(predictions)
+                    f_train.append(predictions.cpu().detach())
+                    y_pred_train.append(targets.cpu().detach())
+                for i, (samples, targets) in enumerate(valid_loader):
+                    samples = samples.to(device).long()
+                    if args.dataset == 'toy':
+                        predictions = model.encode(samples.float())
+                        targets = classifier(predictions)
+                    elif args.model_name == 'cnn':
+                        # predictions = encoder(samples)
+                        # targets = classifier(predictions)
+                        meaned, predictions = model.encode(samples)
+                        targets = classifier(meaned)
+                    else:
+                        predictions = model.encode(samples)
+                        targets = classifier(predictions)
+                    f_val.append(predictions.cpu().detach())
+                    y_pred_val.append(targets.cpu().detach())
             f_train = torch.cat(f_train, 0).numpy()
             y_pred_train = torch.cat(y_pred_train, 0).numpy()
             f_val = torch.cat(f_val, 0).numpy()
             y_pred_val = torch.cat(y_pred_val, 0).numpy()
-            # print('f_train.shape: ', f_train.shape)
-            # print('y_pred_train.shape: ', y_pred_train.shape)
-            # print('f_val.shape: ', f_val.shape)
-            # print('y_pred_val.shape: ', y_pred_val.shape)
         with open(args.save_dir + f'train_embeddings_{args.layer_idx}.npy', 'wb') as f:
             np.save(f, f_train)
-        if not os.path.exists(args.save_dir + 'pred_train.npy'):
-            np.save(args.save_dir + 'pred_train.npy', y_pred_train)
+        np.save(args.save_dir + 'pred_train.npy', y_pred_train)
         with open(args.save_dir + f'val_embeddings_{args.layer_idx}.npy', 'wb') as f:
             np.save(f, f_val)
-        if not os.path.exists(args.save_dir + 'pred_val.npy'):
-            np.save(args.save_dir + 'pred_val.npy', y_pred_val)
-        print('finished inference!')
+        np.save(args.save_dir + 'pred_val.npy', y_pred_val)
+        args.logger.info('finished inference!')
         f_train = torch.from_numpy(f_train)
         y_pred_train = torch.from_numpy(y_pred_train)
         f_val = torch.from_numpy(f_val)
@@ -317,14 +311,14 @@ def inference(data, model, classifier, device, args):
         f_val = torch.from_numpy(np.load(args.save_dir + f'val_embeddings_{args.layer_idx}.npy'))
         y_pred_train = torch.from_numpy(np.load(args.save_dir + 'pred_train.npy'))
         y_pred_val = torch.from_numpy(np.load(args.save_dir + 'pred_val.npy'))
-        print('f_train.shape: ', f_train.shape) #32000， 64
-        print('f_val.shape: ', f_val.shape) #7936， 64
-        print('y_pred_train.shape: ', y_pred_train.shape)
-        print('y_pred_val.shape: ', y_pred_val.shape)
-        print('inference results loaded!')
+        args.logger.info(f'f_train.shape: {f_train.shape}') #32000， 64
+        args.logger.info(f'f_val.shape: {f_val.shape}') #7936， 64
+        args.logger.info(f'y_pred_train.shape: {y_pred_train.shape}')
+        args.logger.info(f'y_pred_val.shape: {y_pred_val.shape}')
+        args.logger.info(f'inference results loaded!')
     return f_train, y_pred_train, f_val, y_pred_val
 
-def concept_analysis(f_train, x_train, topic_vector, save_file, model_name = None):
+def concept_analysis(f_train, x_train, topic_vector, save_file, logger, model_name = None):
     if model_name == 'cnn':
         f_train = f_train.swapaxes(1, 2)
     # 3-D data
@@ -358,7 +352,7 @@ def concept_analysis(f_train, x_train, topic_vector, save_file, model_name = Non
             distance = torch.norm(f_train - concept, dim = -1) # (size)
             # print('distance.shape: ', distance.shape)
             knn = distance.topk(150, largest=False).indices
-            print('knn.shape: ', knn.shape) # (150)
+            logger.info('knn.shape: ', knn.shape) # (150)
             # raise Exception('end')
 
         words = []
@@ -380,32 +374,32 @@ def concept_analysis(f_train, x_train, topic_vector, save_file, model_name = Non
             if word in cx:
                 del cx[word]
         most_occur = list(cx.most_common(25))
-        print("Concept " + str(c_idx) + " most common words: \n")
-        write += "Concept " + str(c_idx) + " most common words: \n"
-        print(str(most_occur) + '\n')
-        write += str(most_occur) + '\n'
+        logger.info(f"Concept {str(c_idx)} most common words: \n")
+        # write += "Concept " + str(c_idx) + " most common words: \n"
+        logger.info(str(most_occur))
+        # write += str(most_occur) + '\n'
         for s in sentences:
-            print(s)
-            write += s + '\n'
-        print("\n\n")
-        write += '\n\n'
-    #save the results to a file
-    text_file = open(save_file, "w")
-    n = text_file.write(write)
-    text_file.close()
+            logger.info(s)
+            # write += s + '\n'
+        logger.info("\n")
+        # write += '\n\n'
+    # #save the results to a file
+    # text_file = open(save_file, "w")
+    # n = text_file.write(write)
+    # text_file.close()
 
-def make_PDP(f_train, classifier, topic_vector, save_dir, device, method, model, rge = [-1, 1]):
+def make_PDP(f_train, classifier, topic_vector, save_dir, device, method, model, logger, rge = [-1, 1]):
     # print('f_train.shape1: ', f_train.shape)
     if model == 'cnn':
         f_train = f_train.swapaxes(1, 2) # from size, n_concept, maxlen  -> size, maxlen, n_concept
     # print('f_train.shape2: ', f_train.shape)
     fig, axs = plt.subplots(1)
     plt_i = 0
-    print(topic_vector.T.shape) # 4, 100
-    for t in tqdm(topic_vector):
+    logger.info(topic_vector.T.shape) # 4, 100
+    for t in topic_vector:
         xs = []
         ys = []
-        for i in tqdm(np.linspace(rge[0], rge[1], 100)):
+        for i in np.linspace(rge[0], rge[1], 100):
             xs.append(i)
             new_f_train = f_train + t*i
             if model == 'cnn':
@@ -450,39 +444,14 @@ def returnCAM(feature_conv, weight_softmax, concepts, max_len = 400):
         output_cam.append(resized)
     return output_cam
 
-# #GRAD-CAM
-# # 生成CAM图的函数，完成权重和feature相乘操作，最后resize成上采样
-# def returnCAM(feature_convs, weight_softmax, class_idx, size_upsample = (240, 240)):
-#     bz, nc, h, w = feature_convs.shape # 获取feature_conv特征的尺寸
-#     output_cam = []
-#     # class_idx为预测分值较大的类别的数字表示的数组，一张图片中有N类物体则数组中N个元素
-#     for feature_conv in feature_convs:
-#         output = []
-#         for idx in class_idx:
-#         # weight_softmax中预测为第idx类的参数w乘以feature_map(为了相乘，故reshape了map的形状)
-#             cam = weight_softmax[idx].dot(feature_conv.reshape((nc, h*w))) 
-#             # 把原来的相乘再相加转化为矩阵                
-#             # w1*c1 + w2*c2+ .. -> (w1,w2..) * (c1,c2..)^T -> (w1,w2...)*((c11,c12,c13..),(c21,c22,c23..))
-#             # 将feature_map的形状reshape回去
-#             cam = cam.reshape(h, w)
-#             # 归一化操作（最小的值为0，最大的为1）
-#             cam = cam - np.min(cam)
-#             cam_img = cam / np.max(cam)
-#             # 转换为图片的255的数据
-#             cam_img = np.uint8(255 * cam_img)
-#             # resize 图片尺寸与输入图片一致
-#             output.append(cv2.resize(cam_img, size_upsample))
-#         output_cam.append(np.stack(output))
-#     return np.stack(output_cam)
-
 def produce_heatmaps_concept(figname, model, samples, features_blobs, topic_vec, method = 1):
     ws = 50 #window_size
     n = 5 #how many top examples to show
     nc = topic_vec.T.shape[0] #how many concepts
     _, _, height, width = samples.shape
-    print('height: {}, width: {}'.format(height, width))
+    # print('height: {}, width: {}'.format(height, width))
     all_cams = returnCAM(features_blobs, topic_vec.T, range(nc), size_upsample = [height, width])
-    print(all_cams.shape) #100, 5, 224, 224
+    # print(all_cams.shape) #100, 5, 224, 224
     # displaying image
     fig, ax = plt.subplots(nc, n, figsize = (2*nc, 2*n))
     for c in range(nc):
@@ -563,7 +532,7 @@ def add_activation_hook(model, layer_idx):
     # module = all_modules_list[layer_idx]
     bertlayers = [i for i in list(model.modules()) if isinstance(i, transformers.models.bert.modeling_bert.BertLayer)]
     module = bertlayers[layer_idx]
-    print('module: ', module)
+    # print('module: ', module)
     module.register_forward_hook(extract_activation_hook)
 
 def get_bert_intermediate_output(model, samples, targets, masks, device):
@@ -574,23 +543,27 @@ def get_bert_intermediate_output(model, samples, targets, masks, device):
     return samples, targets
 
 def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model, device, args, toy = True, use_cuda = True, train_masks = None, val_masks = None):
+    args.logger.info('Loading topic model')
     start = time.time()
     if args.overall_method == 'kmeans':
+        args.logger.info('kmeans')
         model, topic_vector = get_kmeans_concept(f_train, args.n_concept)
         end = time.time()
-        print('training time elapsed: ', end - start)
+        args.logger.info(f'training time elapsed: {end - start}')
         return model, topic_vector
     if args.overall_method == 'pca':
-        model, topic_vector = get_pca_concept(f_train, args.n_concept)
+        args.logger.info('pca')
+        model, topic_vector = get_pca_concept(f_train, args.n_concept, args)
         end = time.time()
-        print('training time elapsed: ', end - start)
+        args.logger.info(f'training time elapsed: {end - start}')
         return model, topic_vector
     if args.overall_method == 'BCVAE':
+        args.logger.info('BCVAE')
          # use normal as priors now
         prior_dist = dist.Normal()
         q_dist = dist.Normal()
         use_cuda = (device == torch.device('cuda'))
-        print('use_cuda: ', use_cuda)
+        args.logger.info('use_cuda: ', use_cuda)
         if toy == True:
             hidden_dim = 64
         elif args.model_name == 'cnn':
@@ -599,17 +572,17 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
         else:
             hidden_dim = f_train.shape[-1]
         if args.train_topic_model:
-            print('training')
+            args.logger.info('training BCVAE model')
             flattened = False
             if toy == True:
                 f_train = f_train.swapaxes(1, 3).flatten(start_dim = 0, end_dim = -2) # size, 64, 4, 4 -> size, 4, 4, 64 -> size, 16, 64
             elif args.model_name == 'cnn':
-                flattened = True
-                original_shape = f_train.shape
-                print('before flattening: ', f_train.shape)
+                # flattened = True
+                # original_shape = f_train.shape
+                # print('before flattening: ', f_train.shape)
                 f_train = f_train.flatten(start_dim = 1, end_dim = -1)
-            else:
-                print('f_train.shape: ', f_train.shape) # size, 768
+            # else:
+                # print('f_train.shape: ', f_train.shape) # size, 768
             train_loader = DataLoader(dataset = f_train, batch_size = args.batch_size, shuffle = True, drop_last = False)
             # initialize model
             vae = VAE(z_dim=args.n_concept, use_cuda=use_cuda, prior_dist=prior_dist, q_dist=q_dist,
@@ -637,7 +610,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                     # do ELBO gradient and accumulate loss
                     obj, elbo = vae.elbo(x, dataset_size)
                     if utils.isnan(obj).any():
-                        print(obj)
+                        args.logger.info(obj)
                         raise ValueError('NaN spotted in objective.')
                         # print('NaN spotted in objective.')
                     obj.mean().mul(-1).backward()
@@ -647,7 +620,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                     # report training diagnostics
                     if iteration % 1000 == 0:
                         train_elbo.append(elbo_running_mean.avg)
-                        print('[iteration %03d] time: %.2f \tbeta %.2f \tlambda %.2f training ELBO: %.4f (%.4f)' % (
+                        args.logger.info('[iteration %03d] time: %.2f \tbeta %.2f \tlambda %.2f training ELBO: %.4f (%.4f)' % (
                             iteration, time.time() - batch_time, vae.beta, vae.lamb,
                             elbo_running_mean.val, elbo_running_mean.avg))
 
@@ -663,7 +636,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
             torch.save(vae.state_dict(), f'{args.graph_save_folder}topic_model_{args.overall_method}_{args.layer_idx}.pth')
             dataset_loader = DataLoader(train_loader.dataset, batch_size=1000, num_workers=1, shuffle=False)
             logpx, dependence, information, dimwise_kl, analytical_cond_kl, marginal_entropies, joint_entropy = \
-                elbo_decomposition(vae, dataset_loader, hidden_dim)
+                elbo_decomposition(vae, dataset_loader, hidden_dim, args.logger)
             torch.save({
                 'logpx': logpx,
                 'dependence': dependence,
@@ -675,19 +648,19 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                 }, args.graph_save_folder + 'elbo_decomposition.pth')
             topic_vec = vae.get_topic_word_dist()
             end = time.time()
-            print('training time elapsed: ', end - start)
+            args.logger.info('training time elapsed: ', end - start)
             return vae, topic_vec.squeeze().transpose(1, 0)
         else:
-            print('loading')
+            args.logger.info('loading BCVAE model')
             vae = VAE(z_dim=args.n_concept, use_cuda=use_cuda, prior_dist=prior_dist, q_dist=q_dist,
                 include_mutinfo=True, tcvae=True, conv=False, mss=False, hidden_dim = hidden_dim)
             vae.load_state_dict(torch.load(f'{args.graph_save_folder}topic_model_{args.overall_method}_{args.layer_idx}.pth'))    
             topic_vec = vae.get_topic_word_dist()
             end = time.time()
-            print('training time elapsed: ', end - start)
+            args.logger.info('training time elapsed: ', end - start)
             return vae, topic_vec.squeeze().transpose(1, 0)
     else:
-        print('loading topic model')
+        args.logger.info('loading topic model')
         if args.train_topic_model:
             if not args.divide_bert:
                 train_data = TensorDataset(f_train, y_pred_train)
@@ -713,51 +686,26 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                 topic_model = topic_model_toy(criterion, classifier, f_train, args.n_concept, args.thres, device, args)
             else:
                 topic_model = topic_model_main(criterion, classifier, f_train, args.n_concept, args.thres, device, args)
-            # print(topic_model)
-            # Only optimize the new parameters
             total_number_params = sum([np.prod(p.size()) for p in topic_model.parameters()])
-            print('{} total parameters'.format(total_number_params))
+            args.logger.info('{} total parameters'.format(total_number_params))
             trainable_params = filter(lambda p: p.requires_grad, topic_model.parameters())
             trainable_number_params = sum([np.prod(p.size()) for p in trainable_params])
-            print('{} parameters to train'.format(trainable_number_params))
+            args.logger.info('{} parameters to train'.format(trainable_number_params))
             topic_model.to(device)
 
             # Adam optimizer
             optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, topic_model.parameters()), lr = args.lr)
-            epoch_history = {
-                "flip_loss": [],
-                "pred_loss": [],
-                "concept_sim": [],
-                "concept_far": [],
-                "consistency_loss": [],
-                "total_loss": [],
-                "accuracy": [],
-                "val_flip_loss": [],
-                "val_pred_loss": [],
-                "val_concept_sim": [],
-                "val_concept_far": [],
-                "val_consistency_loss": [],
-                "val_total_loss": [],
-                "val_accuracy": [],
-            }
+            main_items = ["ae_loss", "flip_loss", "pred_loss", "concept_sim", "concept_far", "total_loss", "accuracy"]
+            epoch_history = {}
+            for item in main_items:
+                epoch_history[item] = []
+                epoch_history['val_'+item] = []
 
-            for ep in trange(args.epochs, unit="epoch", desc="Train"):
-                batch_history = {
-                    "flip_loss": [],
-                    "pred_loss": [],
-                    "concept_sim": [],
-                    "concept_far": [],
-                    "consistency_loss": [],
-                    "total_loss": [],
-                    "accuracy": [],
-                    "val_flip_loss": [],
-                    "val_pred_loss": [],
-                    "val_concept_sim": [],
-                    "val_concept_far": [],
-                    "val_consistency_loss": [],
-                    "val_total_loss": [],
-                    "val_accuracy": []
-                }
+            for ep in range(args.epochs):
+                batch_history = {}
+                for item in main_items:
+                    batch_history[item] = []
+                    batch_history['val_'+item] = []
                 topic_model.train()
                 if args.overall_method == 'two_stage':
                     if ep < args.shap_epochs:
@@ -776,8 +724,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, topic_model.parameters()))
                 else:
                     method = args.overall_method
-                # print('HERE')
-                for i, batch in enumerate(tqdm(train_loader)):
+                for i, batch in enumerate(train_loader):
                     if args.divide_bert:
                         (samples, targets, masks) = batch
                         # extracted_activations = []
@@ -792,7 +739,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                         targets = targets.to(device)
                     optimizer.zero_grad()
                     samples.requires_grad = True
-                    predictions, flip_loss, concept_sim, concept_far, topic_prob_n = topic_model(samples, method, targets)
+                    predictions, ae_loss, flip_loss, concept_sim, concept_far, topic_prob_n = topic_model(samples, method, targets)
                     if 'bert' in args.model_name:
                         predictions = F.softmax(predictions, dim = 1)
                         targets = F.softmax(targets, dim = 1)
@@ -808,17 +755,17 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                     # print('targets: ', targets)
                     # print('targets.squeeze().float().shape: ', targets.squeeze().float().shape)
                     try:
-                        pred_loss = args.reg_1 * criterion(predictions.squeeze(), targets.squeeze().float()) #here is wrong!
+                        pred_loss = args.reg_1 * criterion(predictions.squeeze(), targets.squeeze().float())
                     except:
-                        pred_loss = args.reg_1 * criterion(predictions.squeeze(), targets.squeeze().long()) #here is wrong!
-                    if method=='cc' and args.attack == True:
-                        data_grad = topic_model.topic_vector.grad.data
-                        # print('data_grad.shape: ', data_grad.shape)
-                        topic_model.topic_vector = nn.Parameter(fgsm_attack(topic_model.topic_vector, 0.02, data_grad))
-                        flip_loss = 0
-                        loss = args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far
-                    else:
-                        loss = args.reg_0 * flip_loss + args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far
+                        pred_loss = args.reg_1 * criterion(predictions.squeeze(), targets.squeeze().long())
+                    # if method=='cc' and args.attack == True:
+                    #     data_grad = topic_model.topic_vector.grad.data
+                    #     # print('data_grad.shape: ', data_grad.shape)
+                    #     topic_model.topic_vector = nn.Parameter(fgsm_attack(topic_model.topic_vector, 0.02, data_grad))
+                    #     flip_loss = 0
+                    #     loss = ae_loss + args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far
+                    # else:
+                    loss = ae_loss + args.reg_0 * flip_loss + args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far
                     if args.dataset!= 'imdb':
                         if toy == True:
                             size = (predictions.size(0)*predictions.size(1))
@@ -848,7 +795,8 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                     torch.nn.utils.clip_grad_norm_(topic_model.parameters(), 5)
                     optimizer.step()
                     
-                    if method == 'cc' and not args.attack:
+                    # if method == 'cc' and not args.attack:
+                    if method == 'cc':
                         batch_history["flip_loss"].append(args.reg_0 * flip_loss.item())
                         # batch_history["consistency_loss"].append(args.reg_4 * consistency_loss.item())
                     else:
@@ -860,24 +808,17 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                         batch_history["concept_sim"].append(args.reg_2 * concept_sim.item())
                     except:
                         batch_history["concept_sim"].append(args.reg_2 * concept_sim)
+                    batch_history["ae_loss"].append(ae_loss.item())
                     batch_history["concept_far"].append(args.reg_3 * concept_far.item())
                     batch_history["total_loss"].append(loss.item())
                     batch_history["accuracy"].append(acc)
-                        
-                epoch_history["pred_loss"].append(np.mean(batch_history["pred_loss"]))
-                epoch_history["concept_sim"].append(np.mean(batch_history["concept_sim"]))
-                epoch_history["concept_far"].append(np.mean(batch_history["concept_far"]))
-                # epoch_history["consistency_loss"].append(np.mean(batch_history["consistency_loss"]))
-                epoch_history["total_loss"].append(np.mean(batch_history["total_loss"]))
-                epoch_history["accuracy"].append(np.mean(batch_history["accuracy"]))
-                # if method == 'cc':
-                epoch_history["flip_loss"].append(np.mean(batch_history["flip_loss"]))
+                for item in main_items:
+                    epoch_history[item].append(np.mean(batch_history[item]))
                 
                 # print("Validation...")
                 topic_model.eval()
                 with torch.no_grad():        
                     # validation loop
-                    # with tqdm(valid_loader, desc="valid") as tbatch:
                     for i, batch in enumerate(valid_loader):
                         if args.divide_bert:
                             (samples, targets, masks) = batch
@@ -890,7 +831,7 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                             (samples, targets) = batch
                             samples = samples.to(device).float()
                             targets = targets.to(device)
-                        predictions, flip_loss, concept_sim, concept_far, topic_prob_n = topic_model(samples, method, targets)
+                        predictions, ae_loss, flip_loss, concept_sim, concept_far, topic_prob_n = topic_model(samples, method, targets)
                         if 'bert' in args.model_name:
                             predictions = F.softmax(predictions, dim = 1)
                             targets = F.softmax(targets, dim = 1)
@@ -905,11 +846,11 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                             pred_loss = args.reg_1 * criterion(predictions.squeeze(), targets.squeeze().float()) #here is wrong!
                         except:
                             pred_loss = args.reg_1 * criterion(predictions, targets.squeeze().long()) #here is wrong!
-                        # if method == 'conceptshap':
-                        consistency_loss = 0
-                        # else:
-                            # consistency_loss = concept_consistency(topic_prob_n, predictions.squeeze(), targets.float(), args.batch_size)
-                        loss = args.reg_0 * flip_loss + args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far + args.reg_4 * consistency_loss
+                        # # if method == 'conceptshap':
+                        # consistency_loss = 0
+                        # # else:
+                        #     # consistency_loss = concept_consistency(topic_prob_n, predictions.squeeze(), targets.float(), args.batch_size)
+                        loss = ae_loss + args.reg_0 * flip_loss + args.reg_1 * pred_loss + args.reg_2 * concept_sim + args.reg_3 * concept_far
                         if args.dataset!= 'imdb':
                             if toy == True:
                                 size = (predictions.size(0)*predictions.size(1))
@@ -929,11 +870,8 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                         # raise Exception('end')
                         if method == 'cc':
                             batch_history["val_flip_loss"].append(args.reg_0 * flip_loss.item())
-                            # batch_history["val_consistency_loss"].append(args.reg_4 * consistency_loss.item())
-                            batch_history["val_consistency_loss"].append(args.reg_4 * consistency_loss)
                         else:
                             batch_history["val_flip_loss"].append(args.reg_0 * flip_loss)
-                            batch_history["val_consistency_loss"].append(args.reg_4 * consistency_loss)
 
                         batch_history["val_pred_loss"].append(args.reg_1 * pred_loss.item())
                         try:
@@ -947,32 +885,32 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                 #save this epoch's validation accuracy for evaluation
                 val_accuracy = np.mean(batch_history["val_accuracy"])
 
-                epoch_history["val_pred_loss"].append(np.mean(batch_history["val_pred_loss"]))
-                epoch_history["val_concept_sim"].append(np.mean(batch_history["val_concept_sim"]))
-                epoch_history["val_concept_far"].append(np.mean(batch_history["val_concept_far"]))
-                epoch_history["val_consistency_loss"].append(np.mean(batch_history["val_consistency_loss"]))
-                epoch_history["val_total_loss"].append(np.mean(batch_history["val_total_loss"]))
-                epoch_history["val_accuracy"].append(val_accuracy)
-                # if method == 'cc':
-                epoch_history["val_flip_loss"].append(np.mean(batch_history["val_flip_loss"]))
-                # print(f"{epoch_history}")
-                # best_val_acc = np.max(epoch_history['val_accuracy'])
+                for item in main_items:
+                    if item == 'accuracy':
+                        epoch_history["val_accuracy"].append(val_accuracy)
+                    else:
+                        epoch_history[f"val_{item}"].append(np.mean(batch_history[f"val_{item}"]))
+                        
                 if not (args.layer_idx==-1):
                     torch.save(topic_model, f'{args.graph_save_folder}topic_model_' + args.overall_method + f'_{args.layer_idx}/epoch_{ep}.pkl')
-                    print('MODEL SAVED AT EPOCH {}'.format(ep+1))
+                    args.logger.info('MODEL SAVED AT EPOCH {}'.format(ep+1))
                 if args.early_stopping:
                     if val_accuracy<=0.59: # can change here
-                        print(f'EARLY STOPPING AT EPOCH {ep}')
+                        args.logger.info(f'EARLY STOPPING AT EPOCH {ep}')
                         break
-                print(epoch_history)
-            print('STOPPED')
+                
+                print_history = {}
+                for key in epoch_history.keys():
+                    print_history[key] = epoch_history[key][-1]
+                args.logger.info(f'epoch {ep} out of {args.epochs}: {print_history}')
+            args.logger.info('FINISHED')
             if args.layer_idx==-1:
                 torch.save(topic_model, f'{args.graph_save_folder}topic_model_' + args.overall_method + f'_{args.layer_idx}.pkl')
-                print('MODEL SAVED AT EPOCH {}'.format(ep+1))
+                args.logger.info('MODEL SAVED AT EPOCH {}'.format(ep+1))
             topic_vec = topic_model.topic_vector.cpu().detach().numpy()
             
             fig, axs = plt.subplots(4, 2)
-            metrics = ['pred_loss', 'flip_loss', 'concept_sim', 'concept_far', 'consistency_loss', 'total_loss', 'accuracy']
+            metrics = ['ae_loss', 'pred_loss', 'flip_loss', 'concept_sim', 'concept_far', 'total_loss', 'accuracy']
 
             # PLOTTING
             for i in range(len(metrics)):
@@ -989,15 +927,14 @@ def load_topic_model(classifier, f_train, y_pred_train, f_val, y_pred_val, model
                 topic_model = torch.load(f'{args.graph_save_folder}topic_model_' + args.overall_method + f'_{args.layer_idx}/epoch_{args.epochs-1}.pkl')
             # model.to(device)
             topic_vec = topic_model.topic_vector.cpu().detach().numpy()
-            print('topic model loaded')
+            args.logger.info('topic model loaded')
     end = time.time()
-    print('training time elapsed: ', end - start)
+    args.logger.info('training time elapsed: ', end - start)
     return topic_model, topic_vec
 
 def run_model_to_get_pred(args, f_val, toy, topic_model, model, classifier, device, perturb = -1, targets = None, masks = None):
     if args.overall_method == 'pca':
         flattened = False
-        # print('f_val.shape: ', f_val.shape) #size, hidden_dim
         if f_val.dim() == 4: #toy dataset
             flattened = True
             original_shape = f_val.shape
@@ -1119,15 +1056,13 @@ def eval_causal_effect_model(topic_model, model, classifier, device, f_val, y_va
     else:
         new_y_pred = y_pred
         original_acc = (new_y_pred.cpu().detach().numpy().squeeze().round() == y_val).sum().item()
-    print('1original accuracy: {} \n'.format(original_acc))
+    # print('1original accuracy: {} \n'.format(original_acc))
     if toy == True:
         original_acc = original_acc / (new_y_pred.shape[0]*new_y_pred.shape[1])
     else:
         original_acc = original_acc / new_y_pred.shape[0]
-    print('2original accuracy: {} \n'.format(original_acc))
-    write = ''
-    write += str(args)
-    write += '\n'
+    # print('2original accuracy: {} \n'.format(original_acc))
+    write = str(args) + '\n'
     write += 'original accuracy: {} \n'.format(original_acc)
     # print('y_pred: ', y_pred[-10:])
     overall_effects = []
@@ -1173,7 +1108,8 @@ def eval_causal_effect_model(topic_model, model, classifier, device, f_val, y_va
         write += '\nWithout last dimension:\n'
         write += 'Average effect: {}; standard deviation: {}\n'.format(np.mean(overall_effects[:-1]), np.std(overall_effects[:-1]))
         write += 'Average accuracy change: {}; standard deviation: {}'.format(np.mean(overall_accs_change[:-1]), np.std(overall_accs_change[:-1]))
-
+    args.logger.info('EVALUATING CAUSAL EFFECT')
+    args.logger.info('write')
     return write, np.array(overall_effects), overall_accs_change
 
 def postprocess(topic_model, model, classifier, device, f_val, y_val, topic_vec, args, toy = True, model_name = False):
@@ -1182,17 +1118,17 @@ def postprocess(topic_model, model, classifier, device, f_val, y_val, topic_vec,
         write, overall_effects, overall_accs_change = eval_causal_effect_model(topic_model, model, classifier, device, f_val, y_val, topic_vec, args, toy, model_name)
         # filter out small effect concepts
         valid_indices = torch.from_numpy(np.where(overall_effects>1e-5)[0]).to(device)
-        print('valid_indices: ', valid_indices)
+        # print('valid_indices: ', valid_indices)
         if len(valid_indices) != topic_model.n_concept:
             # change topic_model accordingly
             topic_model.n_concept = len(valid_indices)
-            print('topic_vector.shape: ', topic_model.topic_vector.shape)
+            # print('topic_vector.shape: ', topic_model.topic_vector.shape)
             original_topic_vector = topic_model.topic_vector
             topic_model.topic_vector = nn.Parameter(torch.index_select(topic_model.topic_vector, -1, valid_indices))
-            print('topic_vector.shape: ', topic_model.topic_vector.shape)
-            print('rec_vector_1.shape: ', topic_model.rec_vector_1.shape)
+            # print('topic_vector.shape: ', topic_model.topic_vector.shape)
+            # print('rec_vector_1.shape: ', topic_model.rec_vector_1.shape)
             topic_model.rec_vector_1 = nn.Parameter(torch.index_select(topic_model.rec_vector_1, 0, valid_indices))
-            print('rec_vector_1.shape: ', topic_model.rec_vector_1.shape)
+            # print('rec_vector_1.shape: ', topic_model.rec_vector_1.shape)
             topic_vec = topic_model.topic_vector
             if args.n_concept-1 not in list(valid_indices.detach().cpu().numpy()):
                 args.one_correlated_dimension = False #not calculate without
@@ -1204,32 +1140,31 @@ def postprocess(topic_model, model, classifier, device, f_val, y_val, topic_vec,
         if not skipped:
             # do new evaluation
             write, overall_effects, overall_accs_change = eval_causal_effect_model(topic_model, model, classifier, device, f_val, y_val, topic_vec, args, toy, model_name)
-        #save to a file
-        with open(args.graph_save_folder + "/" + args.causal_effect_filename + f'_{args.layer_idx}.txt', "w") as text_file:
-            text_file.write(write)
+        # #save to a file
+        # with open(args.graph_save_folder + "/" + args.causal_effect_filename + f'_{args.layer_idx}.txt', "w") as text_file:
+        #     text_file.write(write)
 
 # PERTURB
-def perturbation_analysis(x_val, y_val, concept, model, batch_size, device, cov, p, save_folder, shapes_to_test = range(15)):
+def perturbation_analysis(logger, x_val, y_val, concept, model, batch_size, device, cov, p, save_folder, shapes_to_test = range(15)):
     valid_data = TensorDataset(torch.from_numpy(x_val), torch.from_numpy(y_val))
     valid_loader = DataLoader(valid_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
     accs = []
     preds = []
     with torch.no_grad():
-        with tqdm(valid_loader, desc="valid") as tbatch:
-            for i, (samples, targets) in enumerate(tbatch):
-                samples = samples.to(device=device, dtype=torch.float)
-                targets = targets.to(device=device, dtype=torch.float)
-                predictions, _ = model(samples)
-                preds.append(predictions.cpu().detach())
-                acc = (predictions.round().squeeze() == targets).sum().item()
-                acc = acc / (predictions.size(0)*predictions.size(1))
-                accs.append(acc)
-    print('len(preds): ', len(preds)) #2
-    print('preds[0].shape: ', preds[0].shape) #bs, 15
+        for i, (samples, targets) in enumerate(valid_loader):
+            samples = samples.to(device=device, dtype=torch.float)
+            targets = targets.to(device=device, dtype=torch.float)
+            predictions, _ = model(samples)
+            preds.append(predictions.cpu().detach())
+            acc = (predictions.round().squeeze() == targets).sum().item()
+            acc = acc / (predictions.size(0)*predictions.size(1))
+            accs.append(acc)
+    # print('len(preds): ', len(preds)) #2
+    # print('preds[0].shape: ', preds[0].shape) #bs, 15
     preds = torch.cat(preds, axis = 0)
-    print('preds.shape: ', preds.shape) #size, 15
+    # print('preds.shape: ', preds.shape) #size, 15
     preds_mean = preds.mean(axis = 1).numpy()
-    print('preds_mean.shape: ', preds_mean.shape) #size
+    # print('preds_mean.shape: ', preds_mean.shape) #size
 
     df1_dict = {'shape_to_exclude': ['none'], 'accuracy_without': [np.mean(accs)], 'mean_pred_change': [0]}
     df2_dict = {'shape_to_exclude': ['none']}
@@ -1252,15 +1187,14 @@ def perturbation_analysis(x_val, y_val, concept, model, batch_size, device, cov,
         accs_wo = []
         preds_wo = []
         with torch.no_grad():
-            with tqdm(valid_loader_wo, desc="Train") as tbatch:
-                for i, (samples, targets) in enumerate(tbatch):
-                    samples = samples.to(device=device, dtype=torch.float)
-                    targets = targets.to(device=device, dtype=torch.float)
-                    predictions, _ = model(samples)
-                    preds_wo.append(predictions.cpu().detach())
-                    acc = (predictions.round().squeeze() == targets).sum().item()
-                    acc = acc / (predictions.size(0)*predictions.size(1))
-                    accs_wo.append(acc)
+            for i, (samples, targets) in enumerate(valid_loader_wo):
+                samples = samples.to(device=device, dtype=torch.float)
+                targets = targets.to(device=device, dtype=torch.float)
+                predictions, _ = model(samples)
+                preds_wo.append(predictions.cpu().detach())
+                acc = (predictions.round().squeeze() == targets).sum().item()
+                acc = acc / (predictions.size(0)*predictions.size(1))
+                accs_wo.append(acc)
         preds_wo = torch.cat(preds_wo, axis = 0)
         preds_mean_wo_new = preds_wo.mean(axis = 1).numpy()
 
@@ -1278,7 +1212,7 @@ def perturbation_analysis(x_val, y_val, concept, model, batch_size, device, cov,
         # print(df2_dict)
 
     avg_pred_change = np.mean(df1_dict['mean_pred_change'][1:])
-    print('avg_pred_change: ', avg_pred_change)
+    logger.info('avg_pred_change: ', avg_pred_change)
     df1_dict['p_value'] = [None]
     for i, m in enumerate(shapes_to_test):
         # Null Hypothesis: mean is the same
@@ -1295,5 +1229,5 @@ def perturbation_analysis(x_val, y_val, concept, model, batch_size, device, cov,
     df2.to_csv(df2_file)
 
     num = sum([p<0.05 for p in df1_dict['p_value'][1:]])
-    print('{} dependent concepts'.format(num))
+    logger.info('{} dependent concepts'.format(num))
     return num

@@ -49,7 +49,7 @@ def copy_save_image(x,f1,f2,a,b):
   new_im.save(f2)
 
 def stack(imgs, direction):
-  print('stacking {} imgs'.format(len(imgs)))
+  # print('stacking {} imgs'.format(len(imgs)))
   # idx = len(imgs)//2
   # print('idx: ', idx)
   # imgs_comb1 = np.hstack( (np.asarray(i) for i in imgs[:idx] ) )
@@ -145,9 +145,9 @@ def load_xyconcept(n, pretrain):
 def load_toy_data(args):
   if (not args.pretrained) or args.do_inference or args.visualize or args.eval_causal_effect:
     x, y, concept = load_xyconcept(args.n, False)
-    print('Data Loaded')
+    args.logger.info('Data Loaded')
     x = x.swapaxes(1, 3)
-    print('x.shape: ', x.shape) 
+    args.logger.info(f'x.shape: {x.shape}') 
     x_train = x[:args.n0, :, :, :]
     x_val = x[args.n0:, :, :, :]
   else:
@@ -162,15 +162,15 @@ def target_category_loss(x, category_index, nb_classes):
   return x * K.one_hot([category_index], nb_classes)
 
 
-def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, width=240, \
+def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, logger, width=240, \
                height=240, channel=3, pretrain=True):
   """Loads pretrain model or train one."""
   model = CNN_cls(width, height, channel)
   save_dir = save_folder + 'cnn_cls_toy.pkl'
 
   if pretrain == False:
-    print(model)
-    print('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+    logger.info(model)
+    logger.info('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
     model.to(device)
     # raise Exception('end')
     criterion = nn.BCELoss().to(device)
@@ -188,10 +188,9 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
         "val_loss": [],
         "val_accuracy": [],
     }
-    for i in trange(epochs, unit="epoch", desc="Train"):
+    for ep in range(epochs):
         model.train()
-        with tqdm(train_loader, desc="Train") as tbatch:
-          for i, (samples, targets) in enumerate(tbatch):
+        for i, (samples, targets) in enumerate(train_loader):
             optimizer.zero_grad()
             # model.zero_grad()
             predictions, _ = model(samples.to(device=device, dtype=torch.float))
@@ -205,11 +204,10 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
         epoch_history["loss"].append(np.mean(batch_history["loss"]))
         epoch_history["accuracy"].append(np.mean(batch_history["accuracy"]))
         model.eval()
-        print("Validation...")
+        # logger.info("Validation...")
         with torch.no_grad():                  
           # validation loop
-          with tqdm(valid_loader, desc="valid") as tbatch:
-            for i, (samples, targets) in enumerate(tbatch):
+          for i, (samples, targets) in enumerate(valid_loader):
               predictions, _ = model(samples.to(device=device, dtype=torch.float))
               loss = criterion(predictions.squeeze(), targets.to(device=device, dtype=torch.float))
               acc = (predictions.round().squeeze() == targets.to(device=device, dtype=torch.float)).sum().item() / (predictions.size(0)*predictions.size(1))
@@ -217,6 +215,10 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
               batch_history["val_accuracy"].append(acc)
         epoch_history["val_loss"].append(np.mean(batch_history["val_loss"]))
         epoch_history["val_accuracy"].append(np.mean(batch_history["val_accuracy"]))
+        print_history = {}
+        for key in epoch_history.keys():
+          print_history[key] = epoch_history[key][-1]
+        logger.info(f'epoch {ep} out of {epochs}: {print_history}')
     torch.save(model, save_dir)
     fig, ax = plt.subplots(1, 2)
     ax[0].plot(epoch_history['loss'], label = 'train')
@@ -243,18 +245,18 @@ def load_cls_model(args, device, data):
       train_loader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
       valid_loader = DataLoader(valid_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
       # trains model
-      print(device)
-      print('training prediction model')
+      args.logger.info(device)
+      args.logger.info('training prediction model')
       torch.cuda.empty_cache()
       model = load_model_stm_new(
-          train_loader, valid_loader, device, args.epochs, args.save_dir, pretrain=args.pretrained)
+          train_loader, valid_loader, device, args.epochs, args.save_dir, args.logger, pretrain=args.pretrained)
   else:  
-      print(device)
+      args.logger.info(device)
       # loads model
       torch.cuda.empty_cache()
-      print('loading prediction model')
+      args.logger.info('loading prediction model')
       model = load_model_stm_new(
-          None, None, device, args.epochs, args.save_dir, pretrain=args.pretrained)
+          None, None, device, args.epochs, args.save_dir, args.logger, pretrain=args.pretrained)
   return model
 
 def get_pca_concept(f_train):
@@ -285,7 +287,7 @@ def create_dependent_concept(original, p1):
       raise Exception('Encountered {}'.format(i))
   return np.array(new)
 
-def create_dataset(n_sample, cov, p, return_directly = False, concept = False):
+def create_dataset(logger, n_sample, cov, p, return_directly = False, concept = False):
   """Creates toy dataset and save to disk."""
   if isinstance(concept, bool):
     if cov == False:
@@ -308,7 +310,7 @@ def create_dataset(n_sample, cov, p, return_directly = False, concept = False):
         concept[:, i+5] = create_dependent_concept(concept[:, i], p).reshape((-1,))
       # for i in range(5):
       #   concept[:, i+10] = create_dependent_concept(concept[:, i+5], p).reshape((-1,))
-      print('Created co-dependent concepts')
+      logger.info('Created co-dependent concepts')
     concept[:15, :15] = np.eye(15)
   
   fig = Figure(figsize=(2.4, 2.4))
@@ -320,7 +322,7 @@ def create_dataset(n_sample, cov, p, return_directly = False, concept = False):
   width, height = fig.get_size_inches() * fig.get_dpi()
   width = int(width)
   height = int(height)
-  print(width)
+  # logger.info(width)
   location = [(1.3, 1.3), (3.3, 1.3), (5.3, 1.3), (7.3, 1.3), (9.3, 1.3),
               (1.3, 3.3), (3.3, 3.3), (5.3, 3.3), (7.3, 2.3), (9.3, 3.3),
               (1.3, 5.3), (3.3, 5.3), (5.3, 5.3), (7.3, 5.3), (9.3, 5.3),
@@ -333,7 +335,7 @@ def create_dataset(n_sample, cov, p, return_directly = False, concept = False):
   for i in range(n_sample):
     location_bool = np.zeros(25)
     if i % 1000 == 0:
-      print('{} images are created'.format(i))
+      logger.info('{} images are created'.format(i))
     if concept[i, 5] == 1:
       a = np.random.randint(25)
       while location_bool[a] == 1:
@@ -716,7 +718,7 @@ def get_groupacc_max(min_weight, f_train, f_val, concept,
   print(acc)
   return acc
 
-def visualize_model(x, f_train, topic_vec, graph_save_folder, n_concept, method, topic_model = None, device = None):
+def visualize_model(logger, x, f_train, topic_vec, graph_save_folder, n_concept, method, topic_model = None, device = None):
   x_new = x.swapaxes(1, 3)
   if method == 'BCVAE':
     # some way to get probabilities size, 4, 4, n_concept
@@ -725,15 +727,15 @@ def visualize_model(x, f_train, topic_vec, graph_save_folder, n_concept, method,
     zs, params = topic_model.encode(f_train.to(device))
     topic_prob = params.select(-1, 0).view(shape[0], shape[2], shape[3], -1).detach().cpu()
   else:
-    print('x_new.shape: ', x_new.shape)
+    logger.info('x_new.shape: ', x_new.shape)
     # VISUALIZE THE NEAREST NEIGHBORS
     f_train_n = f_train[:10000]/(np.linalg.norm(f_train[:10000],axis=3,keepdims=True)+1e-9)
     f_train_n = f_train_n.swapaxes(1, 3)
-    print('f_train_n.shape: ', f_train_n.shape) #100, 4, 4, 64
+    logger.info('f_train_n.shape: ', f_train_n.shape) #100, 4, 4, 64
     topic_vec_n = topic_vec/(np.linalg.norm(topic_vec,axis=0,keepdims=True)+1e-9)
-    print('topic_vec_n.shape: ', topic_vec_n.shape) #64, 5
+    logger.info('topic_vec_n.shape: ', topic_vec_n.shape) #64, 5
     topic_prob = np.dot(f_train_n,topic_vec_n) #100, 4, 4, 5
-    print('topic_prob.shape: ', topic_prob.shape)
+    logger.info('topic_prob.shape: ', topic_prob.shape)
     # raise Exception('end')
   n_size = 4 #the final size
   imgs = []

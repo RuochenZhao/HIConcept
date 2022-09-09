@@ -12,7 +12,7 @@ from transformers import BertForSequenceClassification, BertConfig, BertTokenize
 from transformers import DistilBertForSequenceClassification, DistilBertConfig, DistilBertTokenizer
 from transformers import AdamW, get_linear_schedule_with_warmup
 from cls_models import *
-from tqdm import tqdm, trange
+# from tqdm import tqdm, trange
 from matplotlib import pyplot as plt
 from sklearn.datasets import fetch_20newsgroups
 
@@ -54,8 +54,8 @@ def load_data_text(args):
             x_train = ["[CLS] " + s for s in x_train]
             x_val = val_df.sentence.values
             x_val = ["[CLS] " + s for s in x_val]
-        print('len(x_train): ', len(x_train))
-        print('len(x_val): ', len(x_val))
+        args.logger.info(f'len(x_train): {len(x_train)}')
+        args.logger.info(f'len(x_val): {len(x_val)}')
     else:
         if args.dataset == 'news':
             data = load_dataset('ag_news', cache_dir=args.dataset_cache_dir)
@@ -92,7 +92,7 @@ def load_data_text(args):
         # print('y_train[:10]: ', y_train[:10])
         # print('len(x_train): ', len(x_train))
         # print('len(x_val): ', len(x_val))
-        print(np.unique(y_train))
+        args.logger.info(f'{np.unique(y_train)} unique labels')
     if args.fast:
         x_train = x_train[:args.fast]
         y_train = y_train[:args.fast]
@@ -117,8 +117,8 @@ def load_data_text(args):
         ids_val = np.array([np.pad(i, (0, MAX_LEN - len(i)),
                                     mode='constant') for i in ids_val])
         # LOAD INTO PYTORCH FORMAT
-        print('ids_train.shape: ', ids_train.shape)
-        print('y_train.shape: ', y_train.shape)
+        args.logger.info(f'ids_train.shape: {ids_train.shape}')
+        args.logger.info(f'y_train.shape: {y_train.shape}')
         x_train = ids_train
         x_val = ids_val
 
@@ -140,8 +140,8 @@ def load_data_text(args):
         # PAD SEQUENCES
         x_train = pad_sequences(x_train, maxlen=args.maxlen, padding='post')
         x_val = pad_sequences(x_val, maxlen=args.maxlen, padding='post')
-        print(len(x_train), "Training sequences")
-        print(len(x_val), "Validation sequences")
+        args.logger.info(f"{len(x_train)} Training sequences")
+        args.logger.info(f"{len(x_val)} Validation sequences")
         if args.dataset == 'imdb':
             return None, (x_train, y_train), (x_val, y_val)
         else:
@@ -149,7 +149,7 @@ def load_data_text(args):
 
 
 def load_cls_model(args, device, data):
-    print('args.pretrained: ', args.pretrained)
+    args.logger.info(f'args.pretrained: {args.pretrained}')
     if args.pretrained == False and args.dataset not in ['news', 'yahoo_answers']:
         if 'bert' in args.model_name:
             tokenizer, (x_train, y_train), (x_val, y_val), (train_masks, val_masks) = data
@@ -157,19 +157,25 @@ def load_cls_model(args, device, data):
             valid_data = TensorDataset(torch.from_numpy(x_val), val_masks, torch.from_numpy(y_val.astype('int64')))
             train_loader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
             valid_loader = DataLoader(valid_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
-            if args.model_name == 'bert':   
-                config = BertConfig.from_pretrained('bert-base-uncased')
+            if args.model_name == 'bert':  
+                if args.without_pretraining:
+                    config = BertConfig()
+                else:
+                    config = BertConfig.from_pretrained('bert-base-uncased')
                 config.num_labels = len(np.unique(y_train))
-                print('config.num_labels: ', config.num_labels)
+                args.logger.info(f'config.num_labels: {config.num_labels}')
                 model = BertForSequenceClassification(config)
-            elif args.model_name == 'distilbert':   
-                config = DistilBertConfig()
-                model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
+            elif args.model_name == 'distilbert':
+                if args.without_pretraining:
+                    config = DistilBertConfig()
+                    model = DistilBertForSequenceClassification(config)
+                else:
+                    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
         
         else:
             _, (x_train, y_train), (x_val, y_val) = data
             # LOAD INTO PYTORCH FORMAT
-            print('x_train.shape: ', x_train.shape)
+            args.logger.info(f'x_train.shape: {x_train.shape}')
             train_data = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
             valid_data = TensorDataset(torch.from_numpy(x_val), torch.from_numpy(y_val))
             train_loader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
@@ -185,14 +191,14 @@ def load_cls_model(args, device, data):
                     model = CNN_NLP(args.max_features, args.embedding_dim, args.hidden_dim, args.short_sentences)
         # print(model)
         model.to(device)
-        print('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+        args.logger.info('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
         if 'bert' in args.model_name:
             criterion = nn.CrossEntropyLoss().to(device)
             if args.dataset == '20news':
                 args.epochs = 40
                 WEIGHT_DECAY = 0.01
                 LR = 2e-5
-                WARMUP_STEPS =int(0.2*len(train_loader))
+                WARMUP_STEPS =int(0.1*len(train_loader))
 
                 no_decay = ['bias', 'LayerNorm.weight']
                 optimizer_grouped_parameters = [
@@ -235,14 +241,77 @@ def load_cls_model(args, device, data):
             "val_loss": [],
             "val_accuracy": [],
         }
-        for ep in trange(args.epochs, unit="epoch", desc="Train"):
+        for ep in range(args.epochs):
             model.train()
             batch_history = {
                     "loss": [],
                     "accuracy": []
                 }
-            with tqdm(train_loader, desc="Train") as tbatch:
-                for i, batch in enumerate(tbatch):
+            for i, batch in enumerate(train_loader):
+                if 'bert' in args.model_name:
+                    b_input_ids, b_input_mask, b_labels = batch
+                    b_input_ids = b_input_ids.to(device)
+                    b_input_mask = b_input_mask.to(device)
+                    b_labels = b_labels.to(device)
+                    optimizer.zero_grad()
+                    results = model(b_input_ids,
+                        attention_mask=b_input_mask, labels=b_labels)
+                    predictions = results['logits']
+                    targets = b_labels
+                    loss = results[0]
+                    # loss = criterion(predictions.squeeze(), targets.float())
+                else:
+                    samples, targets = batch
+                    samples = samples.to(device).long()
+                    targets = targets.to(device)#100
+                    model.zero_grad()
+                    predictions = model(samples) #100, n_classes
+                    loss = criterion(predictions.squeeze(), targets.float())
+                if 'bert' in args.model_name:
+                    predictions = F.softmax(predictions, dim = 1)
+                    # print('predictions: ', predictions)
+                    # print('predictions.shape: ', predictions.shape)
+                    # print('predictions.max(1).indices: ', predictions.max(1).indices)
+                    # print('targets: ', targets)
+                    acc = (predictions.max(1).indices == targets).sum().item()
+                else:
+                    if args.dataset == 'news' or args.dataset == '20news':
+                        # print('predictions: ', predictions)
+                        # print('predictions.shape: ', predictions.shape)
+                        # print('predictions.max(1).indices: ', predictions.max(1).indices)
+                        # print('predictions.max(1).indices.shape: ', predictions.max(1).indices.shape)
+                        # print('targets: ', targets)
+                        # print('targets.shape: ', targets.shape)
+                        acc = (predictions.max(1).indices == targets).sum().item()
+                    else:
+                        acc = (predictions.squeeze().round() == targets).sum().item()
+                # print('acc: ', acc)
+                acc = acc / args.batch_size
+                # print("args.batch_size: ", args.batch_size)
+                # print('acc: ', acc)
+                # raise Exception('end')
+                loss.backward()
+                if 'bert' in args.model_name:
+                    optimizer.step()
+                    scheduler.step()
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
+                    optimizer.step()
+
+                batch_history["loss"].append(loss.item())
+                batch_history["accuracy"].append(acc)
+                
+                # tbatch.set_postfix(loss=sum(batch_history["loss"]) / len(batch_history["loss"]),
+                #                 acc=sum(batch_history["accuracy"]) / len(batch_history["accuracy"]))
+            epoch_history["loss"].append(sum(batch_history["loss"]) / len(batch_history["loss"]))
+            epoch_history["accuracy"].append(sum(batch_history["accuracy"]) / len(batch_history["accuracy"]))
+            # args.logger.info("Validation...")
+            model.eval()
+            with torch.no_grad():
+                val_losses = []
+                val_acces = []                    
+                # validation loop
+                for i, batch in enumerate(valid_loader):
                     if 'bert' in args.model_name:
                         b_input_ids, b_input_mask, b_labels = batch
                         b_input_ids = b_input_ids.to(device)
@@ -254,99 +323,37 @@ def load_cls_model(args, device, data):
                         predictions = results['logits']
                         targets = b_labels
                         loss = results[0]
-                        # loss = criterion(predictions.squeeze(), targets.float())
                     else:
                         samples, targets = batch
                         samples = samples.to(device).long()
-                        targets = targets.to(device)#100
+                        targets = targets.to(device)
                         model.zero_grad()
-                        predictions = model(samples) #100, n_classes
+                        predictions = model(samples)
                         loss = criterion(predictions.squeeze(), targets.float())
+                    val_losses.append(loss)
                     if 'bert' in args.model_name:
                         predictions = F.softmax(predictions, dim = 1)
-                        # print('predictions: ', predictions)
-                        # print('predictions.shape: ', predictions.shape)
-                        # print('predictions.max(1).indices: ', predictions.max(1).indices)
-                        # print('targets: ', targets)
                         acc = (predictions.max(1).indices == targets).sum().item()
                     else:
                         if args.dataset == 'news' or args.dataset == '20news':
-                            # print('predictions: ', predictions)
-                            # print('predictions.shape: ', predictions.shape)
-                            # print('predictions.max(1).indices: ', predictions.max(1).indices)
-                            # print('predictions.max(1).indices.shape: ', predictions.max(1).indices.shape)
-                            # print('targets: ', targets)
-                            # print('targets.shape: ', targets.shape)
                             acc = (predictions.max(1).indices == targets).sum().item()
                         else:
                             acc = (predictions.squeeze().round() == targets).sum().item()
-                    # print('acc: ', acc)
                     acc = acc / args.batch_size
-                    # print("args.batch_size: ", args.batch_size)
-                    # print('acc: ', acc)
-                    # raise Exception('end')
-                    loss.backward()
-                    if 'bert' in args.model_name:
-                        optimizer.step()
-                        scheduler.step()
-                    else:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
-                        optimizer.step()
-
-                    batch_history["loss"].append(loss.item())
-                    batch_history["accuracy"].append(acc)
-                    
-                    tbatch.set_postfix(loss=sum(batch_history["loss"]) / len(batch_history["loss"]),
-                                    acc=sum(batch_history["accuracy"]) / len(batch_history["accuracy"]))
-            epoch_history["loss"].append(sum(batch_history["loss"]) / len(batch_history["loss"]))
-            epoch_history["accuracy"].append(sum(batch_history["accuracy"]) / len(batch_history["accuracy"]))
-            print("Validation...")
-            model.eval()
-            with torch.no_grad():
-                val_losses = []
-                val_acces = []                    
-                # validation loop
-                with tqdm(valid_loader, desc="valid") as tbatch:
-                    for i, batch in enumerate(tbatch):
-                        if 'bert' in args.model_name:
-                            b_input_ids, b_input_mask, b_labels = batch
-                            b_input_ids = b_input_ids.to(device)
-                            b_input_mask = b_input_mask.to(device)
-                            b_labels = b_labels.to(device)
-                            optimizer.zero_grad()
-                            results = model(b_input_ids,
-                                attention_mask=b_input_mask, labels=b_labels)
-                            predictions = results['logits']
-                            targets = b_labels
-                            loss = results[0]
-                        else:
-                            samples, targets = batch
-                            samples = samples.to(device).long()
-                            targets = targets.to(device)
-                            model.zero_grad()
-                            predictions = model(samples)
-                            loss = criterion(predictions.squeeze(), targets.float())
-                        val_losses.append(loss)
-                        if 'bert' in args.model_name:
-                            predictions = F.softmax(predictions, dim = 1)
-                            acc = (predictions.max(1).indices == targets).sum().item()
-                        else:
-                            if args.dataset == 'news' or args.dataset == '20news':
-                                acc = (predictions.max(1).indices == targets).sum().item()
-                            else:
-                                acc = (predictions.squeeze().round() == targets).sum().item()
-                        acc = acc / args.batch_size
-                        val_acces.append(acc)
+                    val_acces.append(acc)
             val_loss = sum(val_losses) / len(val_losses)
             val_accuracy = sum(val_acces) / len(val_acces)
             epoch_history["val_loss"].append(val_loss.item())
             epoch_history["val_accuracy"].append(val_accuracy)
-            print(f"{epoch_history}")
+            print_history = {}
+            for key in epoch_history.keys():
+                print_history[key] = epoch_history[key][-1]
+            args.logger.info(f"epoch {ep} out of {args.epochs}: {print_history}")
         if 'bert' in args.model_name:
             model.save_pretrained(args.model_save_dir)
         else: 
             torch.save(model, args.model_save_dir)
-        print('MODEL SAVED AT EPOCH {}'.format(ep+1))
+        args.logger.info('MODEL SAVED AT EPOCH {}'.format(ep+1))
 
         fig, ax = plt.subplots(1, 2)
         metrics = ['loss', 'accuracy']
@@ -358,9 +365,9 @@ def load_cls_model(args, device, data):
         plt.savefig(args.save_dir +'/cls_model_training.png')
     else:
         if args.model_name == 'bert':
-            if args.dataset == 'news':
+            if args.dataset == 'news' and (not args.without_pretraining):
                 model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-ag_news')
-            elif args.dataset == 'yahoo_answers':
+            elif args.dataset == 'yahoo_answers' and (not args.without_pretraining):
                 model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-yahoo_answers_topics')
             else:
                 model = BertForSequenceClassification.from_pretrained(args.model_save_dir)
@@ -369,5 +376,5 @@ def load_cls_model(args, device, data):
         else:
             model = torch.load(args.model_save_dir)
         model = model.to(device)
-        print('model loaded')
+        args.logger.info('model loaded')
     return model

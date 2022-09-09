@@ -1,0 +1,14 @@
+Namespace(PDP=False, attack=False, batch_size=128, causal_effect_filename='causal_effect', cov=True, dataset='toy', dataset_cache_dir='../../hf_datasets/', dir='../../DATASETS/toy_data/cov/0.65', divide_bert=False, do_inference=True, early_stopping=False, embedding_dim=100, epochs=10, eval_causal_effect=True, extra_layers=0, fast=False, freeze=False, generate_toy_data=False, graph_save_folder='../models/toy/cov/0.65/two_stage/', hidden_dim=500, interpret=False, layer_idx=-1, load_cs=False, loss='flip', lr=0.0003, masking='max', max_features=100000, maxlen=400, model_name='cnn', n=10000, n0=8000, n_concept=10, one_correlated_dimension=False, overall_method='two_stage', p=0.65, postprocess=False, pretrained=True, random_masking_prob=0.2, reg_0=0.1, reg_1=1, reg_2=0.1, reg_3=0.1, reg_4=0, save_dir='../models/toy/cov/0.65/', seed=0, shap_epochs=5, short_sentences=False, thres=0.2, topk=2000, toy_data_save_dir='../../DATASETS/toy_data/', train_topic_model=False, visualize='txt', visualize_wordcloud=False, with_pretraining=False)
+original accuracy: 0.6390333333333333 
+Concept 0: 1.122581943491241e-05; Accuracy change: 0.0 
+Concept 1: 0.0; Accuracy change: 0.0 
+Concept 2: 8.490199434163515e-06; Accuracy change: 0.0 
+Concept 3: 1.1459866982477251e-05; Accuracy change: 0.0 
+Concept 4: 0.0; Accuracy change: 0.0 
+Concept 5: 1.0298715096723754e-05; Accuracy change: 0.0 
+Concept 6: 0.0; Accuracy change: 0.0 
+Concept 7: 1.1657856703095604e-05; Accuracy change: 0.0 
+Concept 8: 0.0; Accuracy change: 0.0 
+Concept 9: 0.38345274329185486; Accuracy change: -0.06986666666666663 
+Average effect: 0.03835058757495062; standard deviation: 0.11503405201765685
+Average accuracy change: 0.006986666666666664; standard deviation: 0.02095999999999999

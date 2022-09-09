@@ -25,6 +25,7 @@ class topic_model_main(nn.Module):
         self.bert = (args.model_name=='bert')
         self.args = args
         self.criterion = criterion
+        self.ae_criterion = nn.MSELoss()
 
 
     def init_concept(self, embedding_dim, n_concept):
@@ -47,6 +48,9 @@ class topic_model_main(nn.Module):
             loss = self.criterion(pred_perturbed.squeeze(), targets.squeeze().float()) 
             return - loss
         
+    def ae_loss(self, xpred, xin):
+        return self.ae_criterion(xpred, xin)
+
     def concept_sim(self, topic_prob_n):
         # maximize the top k 
         # topic_prob_n : #32, 100, 4
@@ -65,12 +69,6 @@ class topic_model_main(nn.Module):
         # # new way of punishing unused concepts:
         # summed = topic_vector_n.sum(axis = 0) #n_concept #want the mean of concept_probabilities to be bigger
         # return -torch.mean(summed)
-
-
-    # def dotmm(self, a, b):
-    #     #a: x, y, z
-    #     #b: z, n
-    #     return torch.einsum('xyz,zn->xyn', [a, b])
     
     def forward(self, f_input, method, targets, perturb = -1):
         f_input_n = F.normalize(f_input, dim = -1, p=2) #128, 100
@@ -104,6 +102,7 @@ class topic_model_main(nn.Module):
         # print('rec_layer_2.shape: ', rec_layer_2.shape) 
         # rec_layer_f2 = torch.flatten(rec_layer_2, 1)
         # print('rec_layer_f2.shape: ', rec_layer_f2.shape) #128, 39100
+        ae_loss = self.ae_loss(f_input_n, rec_layer_2)
         if method == 'conceptshap':
             if self.args.divide_bert:
                 rec_layer_2 = rec_layer_2.view(int(rec_layer_2.shape[0]/512), 512, 768)
@@ -116,7 +115,7 @@ class topic_model_main(nn.Module):
             concept_sim = self.concept_sim(topic_prob_n) # float
             concept_far = self.concept_far(topic_vector_n) #float
             # raise Exception('end')
-            return pred, 0, concept_sim, concept_far, topic_prob_nn
+            return pred, ae_loss, 0, concept_sim, concept_far, topic_prob_nn
         elif method == 'cc':
             if self.args.divide_bert:
                 rec_layer_2 = rec_layer_2.view(int(rec_layer_2.shape[0]/512), 512, 768)
@@ -181,7 +180,7 @@ class topic_model_main(nn.Module):
                     else:
                         flip_loss += self.flip_loss(pred, pred_perturbed, targets)
             # raise Exception('end')
-            return pred, flip_loss, concept_sim, concept_far, topic_prob_nn
+            return pred, ae_loss, flip_loss, concept_sim, concept_far, topic_prob_nn
 
 def concept_consistency(topic_prob_n, pred, y, batch_size):
     if isinstance(topic_prob_n, int):
@@ -232,7 +231,7 @@ class topic_model_toy(nn.Module):
             self.text = False
         self.args = args
         self.criterion = criterion
-
+        self.ae_criterion = nn.MSELoss()
 
     def init_concept(self, embedding_dim, n_concept):
         r_1 = -0.5
@@ -254,6 +253,9 @@ class topic_model_toy(nn.Module):
             loss = self.criterion(pred_perturbed.squeeze(), targets.squeeze().float()) 
             return - loss
         
+    def ae_loss(self, xpred, xin):
+        return self.ae_criterion(xpred, xin)
+
     def concept_sim(self, topic_prob_n):
         # topic_prob_n : #32, 100, 4
         batch_size = topic_prob_n.shape[0]
@@ -335,6 +337,7 @@ class topic_model_toy(nn.Module):
         # print('rec_layer_2.shape: ', rec_layer_2.shape) 
         # rec_layer_f2 = torch.flatten(rec_layer_2, 1)
         # print('rec_layer_f2.shape: ', rec_layer_f2.shape) #128, 39100
+        ae_loss = self.ae_loss(f_input_n, rec_layer_2)
         if method == 'conceptshap':
             # print('Original rec_layer_2.shape: ', rec_layer_2.shape)
             rec_layer_2 = rec_layer_2.swapaxes(1, n-1) #1, 3 for toy; 1, 2 for text
@@ -346,7 +349,7 @@ class topic_model_toy(nn.Module):
             concept_sim = self.concept_sim(topic_prob_n) # float
             concept_far = self.concept_far(topic_vector_n) #float
             # raise Exception('end')
-            return pred, 0, concept_sim, concept_far, topic_prob_nn
+            return pred, ae_loss, 0, concept_sim, concept_far, topic_prob_nn
         elif method == 'cc':
             concept_sim = self.concept_sim(topic_prob_n) 
             concept_far = self.concept_far(topic_vector_n) 
@@ -404,5 +407,5 @@ class topic_model_toy(nn.Module):
                         flip_loss = self.flip_loss(pred, pred_perturbed)
                     else:
                         flip_loss += self.flip_loss(pred, pred_perturbed)
-            return pred, flip_loss, concept_sim, concept_far, topic_prob_nn
+            return pred, ae_loss, flip_loss, concept_sim, concept_far, topic_prob_nn
             

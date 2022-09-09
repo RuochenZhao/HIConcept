@@ -38,14 +38,10 @@ class BiLSTM(nn.Module):
 
     def encode(self, src):
         output = self.encoder(src)
-        # print('1: ', output.shape) #batch_size, max_len, embedding_dim
         output, _ = self.lstm(output)
         output = nn.functional.tanh(output[:, -1, :])
-        # print('2: ', output.shape) #bs, 200
         output = F.relu(self.dense1(output))
-        # print('3: ', output.shape) #bs, hidden_dim
         output = self.drop(output)
-        # print('4: ', output.shape) #bs, hidden_dim
         return output
 
     def predict(self, output):
@@ -54,12 +50,8 @@ class BiLSTM(nn.Module):
         return output
 
     def forward(self, src):
-        # print('src.shape: ', src.shape)
         output = self.encode(src)
-        # print('output.shape: ', output.shape)
         output = self.predict(output)
-        # print('output.shape: ', output.shape)
-        # raise Exception('end')
         return output
 
 class mean_layer(nn.Module):
@@ -190,10 +182,6 @@ class CNN_NLP(nn.Module):
         return output, x_conv3
     
     def forward(self, input_ids):
-        # print('input_ids.shape: ', input_ids.shape) #128, 200
         output, _ = self.encode(input_ids)
-        # print('output.shape: ', output.shape) #128, 100
-        # raise Exception('end') #100, 6
         output = self.classifier(output)
-        # print('output.shape: ', output.shape)
         return output

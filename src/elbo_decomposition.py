@@ -104,13 +104,13 @@ def analytical_NLL(qz_params, q_dist, prior_dist, qz_samples=None):
     return nlogqz_condx, nlogpz
 
 
-def elbo_decomposition(vae, dataset_loader, hidden_dim):
+def elbo_decomposition(vae, dataset_loader, hidden_dim, logger):
     N = len(dataset_loader.dataset)  # number of data samples
     K = vae.z_dim                    # number of latent variables
     S = 1                            # number of latent variable samples
     nparams = vae.q_dist.nparams
 
-    print('Computing q(z|x) distributions.')
+    logger.info('Computing q(z|x) distributions.')
     # compute the marginal q(z_j|x_n) distributions
     qz_params = torch.Tensor(N, K, nparams)
     n = 0
@@ -133,13 +133,13 @@ def elbo_decomposition(vae, dataset_loader, hidden_dim):
 
     qz_params = Variable(qz_params.cuda(), volatile=True)
 
-    print('Sampling from q(z).')
+    logger.info('Sampling from q(z).')
     # sample S times from each marginal q(z_j|x_n)
     qz_params_expanded = qz_params.view(N, K, 1, nparams).expand(N, K, S, nparams)
     qz_samples = vae.q_dist.sample(params=qz_params_expanded)
     qz_samples = qz_samples.transpose(0, 1).contiguous().view(K, N * S)
 
-    print('Estimating entropies.')
+    logger.info('Estimating entropies.')
     marginal_entropies, joint_entropy = estimate_entropies(qz_samples, qz_params, vae.q_dist)
 
     if hasattr(vae.q_dist, 'NLL'):
@@ -174,62 +174,62 @@ def elbo_decomposition(vae, dataset_loader, hidden_dim):
     # KL(q(z|x)||p(z)) = log q(z|x) - log p(z)
     analytical_cond_kl = (- nlogqz_condx + nlogpz).sum()
 
-    print('Dependence: {}'.format(dependence))
-    print('Information: {}'.format(information))
-    print('Dimension-wise KL: {}'.format(dimwise_kl))
-    print('Analytical E_p(x)[ KL(q(z|x)||p(z)) ]: {}'.format(analytical_cond_kl))
-    print('Estimated  ELBO: {}'.format(logpx - analytical_cond_kl))
+    logger.info('Dependence: {}'.format(dependence))
+    logger.info('Information: {}'.format(information))
+    logger.info('Dimension-wise KL: {}'.format(dimwise_kl))
+    logger.info('Analytical E_p(x)[ KL(q(z|x)||p(z)) ]: {}'.format(analytical_cond_kl))
+    logger.info('Estimated  ELBO: {}'.format(logpx - analytical_cond_kl))
 
     return logpx, dependence, information, dimwise_kl, analytical_cond_kl, marginal_entropies, joint_entropy
 
 
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-checkpt', required=True)
-    parser.add_argument('-save', type=str, default='.')
-    parser.add_argument('-gpu', type=int, default=0)
-    args = parser.parse_args()
+# if __name__ == '__main__':
+#     import argparse
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument('-checkpt', required=True)
+#     parser.add_argument('-save', type=str, default='.')
+#     parser.add_argument('-gpu', type=int, default=0)
+#     args = parser.parse_args()
 
-    def load_model_and_dataset(checkpt_filename):
-        checkpt = torch.load(checkpt_filename)
-        args = checkpt['args']
-        state_dict = checkpt['state_dict']
+#     def load_model_and_dataset(checkpt_filename):
+#         checkpt = torch.load(checkpt_filename)
+#         args = checkpt['args']
+#         state_dict = checkpt['state_dict']
 
-        # backwards compatibility
-        if not hasattr(args, 'conv'):
-            args.conv = False
+#         # backwards compatibility
+#         if not hasattr(args, 'conv'):
+#             args.conv = False
 
-        from vae_quant import VAE, setup_data_loaders
+#         from vae_quant import VAE, setup_data_loaders
 
-        # model
-        if args.dist == 'normal':
-            prior_dist = dist.Normal()
-            q_dist = dist.Normal()
-        elif args.dist == 'laplace':
-            prior_dist = dist.Laplace()
-            q_dist = dist.Laplace()
-        elif args.dist == 'flow':
-            prior_dist = flows.FactorialNormalizingFlow(dim=args.latent_dim, nsteps=32)
-            q_dist = dist.Normal()
-        vae = VAE(z_dim=args.latent_dim, use_cuda=True, prior_dist=prior_dist, q_dist=q_dist, conv=args.conv)
-        vae.load_state_dict(state_dict, strict=False)
-        vae.eval()
+#         # model
+#         if args.dist == 'normal':
+#             prior_dist = dist.Normal()
+#             q_dist = dist.Normal()
+#         elif args.dist == 'laplace':
+#             prior_dist = dist.Laplace()
+#             q_dist = dist.Laplace()
+#         elif args.dist == 'flow':
+#             prior_dist = flows.FactorialNormalizingFlow(dim=args.latent_dim, nsteps=32)
+#             q_dist = dist.Normal()
+#         vae = VAE(z_dim=args.latent_dim, use_cuda=True, prior_dist=prior_dist, q_dist=q_dist, conv=args.conv)
+#         vae.load_state_dict(state_dict, strict=False)
+#         vae.eval()
 
-        # dataset loader
-        loader = setup_data_loaders(args, use_cuda=True)
-        return vae, loader
+#         # dataset loader
+#         loader = setup_data_loaders(args, use_cuda=True)
+#         return vae, loader
 
-    torch.cuda.set_device(args.gpu)
-    vae, dataset_loader = load_model_and_dataset(args.checkpt)
-    logpx, dependence, information, dimwise_kl, analytical_cond_kl, marginal_entropies, joint_entropy = \
-        elbo_decomposition(vae, dataset_loader)
-    torch.save({
-        'logpx': logpx,
-        'dependence': dependence,
-        'information': information,
-        'dimwise_kl': dimwise_kl,
-        'analytical_cond_kl': analytical_cond_kl,
-        'marginal_entropies': marginal_entropies,
-        'joint_entropy': joint_entropy
-    }, os.path.join(args.save, 'elbo_decomposition.pth'))
+#     torch.cuda.set_device(args.gpu)
+#     vae, dataset_loader = load_model_and_dataset(args.checkpt)
+#     logpx, dependence, information, dimwise_kl, analytical_cond_kl, marginal_entropies, joint_entropy = \
+#         elbo_decomposition(vae, dataset_loader, logger)
+#     torch.save({
+#         'logpx': logpx,
+#         'dependence': dependence,
+#         'information': information,
+#         'dimwise_kl': dimwise_kl,
+#         'analytical_cond_kl': analytical_cond_kl,
+#         'marginal_entropies': marginal_entropies,
+#         'joint_entropy': joint_entropy
+#     }, os.path.join(args.save, 'elbo_decomposition.pth'))
