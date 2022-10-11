@@ -5,24 +5,22 @@ from __future__ import division
 from __future__ import print_function
 
 import matplotlib
-# matplotlib.use('GTK3Agg')
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.random import seed
-from skimage.segmentation import felzenszwalb
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-from torch.utils.data import TensorDataset, DataLoader
 from PIL import Image
 from matplotlib import cm
-from cls_models import CNN_cls
+from helper import CNN_cls
 from torch import nn
 import torch
 from tqdm import tqdm, trange
-from concept_models import *
+from conceptshap import *
+from torch.utils.data import TensorDataset, DataLoader
 seed(0)
 batch_size = 64
 
@@ -49,12 +47,7 @@ def copy_save_image(x,f1,f2,a,b):
   new_im.save(f2)
 
 def stack(imgs, direction):
-  # print('stacking {} imgs'.format(len(imgs)))
-  # idx = len(imgs)//2
-  # print('idx: ', idx)
-  # imgs_comb1 = np.hstack( (np.asarray(i) for i in imgs[:idx] ) )
-  # imgs_comb2 = np.hstack( (np.asarray(i) for i in imgs[-idx:] ) )
-  # imgs_comb = np.vstack( (np.asarray(i) for i in [imgs_comb1, imgs_comb2] ) )
+  print('stacking {} imgs'.format(len(imgs)))
   if direction == 'h':
     imgs_comb = np.hstack( (np.asarray(i) for i in imgs ) )
   elif direction == 'v':
@@ -145,37 +138,38 @@ def load_xyconcept(n, pretrain):
 def load_toy_data(args):
   if (not args.pretrained) or args.do_inference or args.visualize or args.eval_causal_effect:
     x, y, concept = load_xyconcept(args.n, False)
-    args.logger.info('Data Loaded')
+    print('Data Loaded')
     x = x.swapaxes(1, 3)
-    args.logger.info(f'x.shape: {x.shape}') 
     x_train = x[:args.n0, :, :, :]
     x_val = x[args.n0:, :, :, :]
+    print('x_train.shape: ', x_train.shape) 
+    print('x_val.shape: ', x_val.shape) 
   else:
     x, y, concept = load_xyconcept(args.n, True)
     x_train = 0
     x_val = 0
   y_train = y[:args.n0, :]
   y_val = y[args.n0:, :]
-  return (x_train, y_train), (x_val, y_val)
+  print('y_train.shape: ', y_train.shape) 
+  print('y_val.shape: ', y_val.shape) 
+  return None, (x_train, y_train), (x_val, y_val)
 
 def target_category_loss(x, category_index, nb_classes):
   return x * K.one_hot([category_index], nb_classes)
 
 
-def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, logger, width=240, \
+def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, args, width=240, \
                height=240, channel=3, pretrain=True):
   """Loads pretrain model or train one."""
   model = CNN_cls(width, height, channel)
   save_dir = save_folder + 'cnn_cls_toy.pkl'
 
   if pretrain == False:
-    logger.info(model)
-    logger.info('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+    print(model)
+    print('{} parameters to train'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
     model.to(device)
-    # raise Exception('end')
     criterion = nn.BCELoss().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     batch_history = {
         "loss": [],
         "accuracy": [],
@@ -188,11 +182,10 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
         "val_loss": [],
         "val_accuracy": [],
     }
-    for ep in range(epochs):
+    for ep in range(30):
         model.train()
         for i, (samples, targets) in enumerate(train_loader):
             optimizer.zero_grad()
-            # model.zero_grad()
             predictions, _ = model(samples.to(device=device, dtype=torch.float))
             loss = criterion(predictions.squeeze(), targets.to(device=device, dtype=torch.float))
             acc = (predictions.round().squeeze() == targets.to(device=device, dtype=torch.float)).sum().item()/ (predictions.size(0)*predictions.size(1))
@@ -204,7 +197,6 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
         epoch_history["loss"].append(np.mean(batch_history["loss"]))
         epoch_history["accuracy"].append(np.mean(batch_history["accuracy"]))
         model.eval()
-        # logger.info("Validation...")
         with torch.no_grad():                  
           # validation loop
           for i, (samples, targets) in enumerate(valid_loader):
@@ -215,10 +207,8 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
               batch_history["val_accuracy"].append(acc)
         epoch_history["val_loss"].append(np.mean(batch_history["val_loss"]))
         epoch_history["val_accuracy"].append(np.mean(batch_history["val_accuracy"]))
-        print_history = {}
-        for key in epoch_history.keys():
-          print_history[key] = epoch_history[key][-1]
-        logger.info(f'epoch {ep} out of {epochs}: {print_history}')
+        print(f'epoch {ep} out of {epochs}: loss - {epoch_history["loss"][-1]}, acc: {epoch_history["accuracy"][-1]}\
+          val loss - {epoch_history["val_loss"][-1]}; val acc: {epoch_history["val_accuracy"][-1]}')
     torch.save(model, save_dir)
     fig, ax = plt.subplots(1, 2)
     ax[0].plot(epoch_history['loss'], label = 'train')
@@ -235,28 +225,28 @@ def load_model_stm_new(train_loader, valid_loader, device, epochs, save_folder, 
   return model
 
 
-def load_cls_model(args, device, data):
+def load_cls_model(args, device, data = False):
   # CLASSIFICATION MODEL
-  (x_train, y_train), (x_val, y_val) = data
   if not args.pretrained:
+      _, (x_train, y_train), (x_val, y_val) = data
       train_data = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
       valid_data = TensorDataset(torch.from_numpy(x_val), torch.from_numpy(y_val))
       # shuffles to have a better pretraining
       train_loader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
       valid_loader = DataLoader(valid_data, shuffle=True, batch_size=args.batch_size, drop_last=False)
       # trains model
-      args.logger.info(device)
-      args.logger.info('training prediction model')
+      print(device)
+      print('training prediction model')
       torch.cuda.empty_cache()
       model = load_model_stm_new(
-          train_loader, valid_loader, device, args.epochs, args.save_dir, args.logger, pretrain=args.pretrained)
+          train_loader, valid_loader, device, args.epochs, args.save_dir,args, pretrain=args.pretrained)
   else:  
-      args.logger.info(device)
+      print(device)
       # loads model
       torch.cuda.empty_cache()
-      args.logger.info('loading prediction model')
+      print('loading prediction model')
       model = load_model_stm_new(
-          None, None, device, args.epochs, args.save_dir, args.logger, pretrain=args.pretrained)
+          None, None, device, args.epochs, args.save_dir, args, pretrain=args.pretrained)
   return model
 
 def get_pca_concept(f_train):
@@ -287,30 +277,21 @@ def create_dependent_concept(original, p1):
       raise Exception('Encountered {}'.format(i))
   return np.array(new)
 
-def create_dataset(logger, n_sample, cov, p, return_directly = False, concept = False):
+def create_dataset(n_sample, cov, p, return_directly = False, concept = False):
   """Creates toy dataset and save to disk."""
   if isinstance(concept, bool):
     if cov == False:
-      # concept = np.reshape(np.random.randint(2, size=15 * n_sample),
-      #                     (-1, 15)).astype(np.bool_)
       concept = np.reshape(np.random.choice(2, size=15 * n_sample, p = [0.7, 0.3]),
                           (-1, 15)).astype(np.bool_)
     else:
-      # concept = np.reshape(np.random.randint(2, size=15 * n_sample),
-      #                     (-1, 15)).astype(np.bool_)
-      # print(concept.shape)
       concept = np.reshape(np.random.choice(2, size=15 * n_sample, p = [0.7, 0.3]),
                           (-1, 15)).astype(np.bool_)
-      # print('concept shape: ', concept.shape)
-      # raise Exception('end')
       i = 10
       concept[:, i] = create_dependent_concept(concept[:, i], p).reshape((-1,))
       for i in range(5):
         #change here for higher covariance
         concept[:, i+5] = create_dependent_concept(concept[:, i], p).reshape((-1,))
-      # for i in range(5):
-      #   concept[:, i+10] = create_dependent_concept(concept[:, i+5], p).reshape((-1,))
-      logger.info('Created co-dependent concepts')
+      print('Created co-dependent concepts')
     concept[:15, :15] = np.eye(15)
   
   fig = Figure(figsize=(2.4, 2.4))
@@ -322,7 +303,7 @@ def create_dataset(logger, n_sample, cov, p, return_directly = False, concept = 
   width, height = fig.get_size_inches() * fig.get_dpi()
   width = int(width)
   height = int(height)
-  # logger.info(width)
+  print(width)
   location = [(1.3, 1.3), (3.3, 1.3), (5.3, 1.3), (7.3, 1.3), (9.3, 1.3),
               (1.3, 3.3), (3.3, 3.3), (5.3, 3.3), (7.3, 2.3), (9.3, 3.3),
               (1.3, 5.3), (3.3, 5.3), (5.3, 5.3), (7.3, 5.3), (9.3, 5.3),
@@ -335,7 +316,7 @@ def create_dataset(logger, n_sample, cov, p, return_directly = False, concept = 
   for i in range(n_sample):
     location_bool = np.zeros(25)
     if i % 1000 == 0:
-      logger.info('{} images are created'.format(i))
+      print('{} images are created'.format(i))
     if concept[i, 5] == 1:
       a = np.random.randint(25)
       while location_bool[a] == 1:
@@ -646,14 +627,10 @@ def get_groupacc(min_weight, f_train, f_val, concept,
 def get_groupacc_max(min_weight, f_train, f_val, concept,
                  n_concept, n_cluster, n0, verbose):
   """Gets the group accuracy for dicovered concepts."""
-  #print(finetuned_model_pr.summary())
-  #min_weight = finetuned_model_pr.layers[-5].get_weights()[0]
 
   loss_table = np.zeros((n_concept, 5))
   for count in range(n_concept):
     for count2 in range(5):
-      #print('count 2 is {}'.format(count2))
-      # count2 = max_cluster[count]
       #similarity bt x_train and topic count when concept count2 == 0 
       mean0 = np.mean(
           np.max(np.matmul(f_train[:1000,:], min_weight[:, count]),(1,2))[concept[:1000,count2] == 0]) * 100
@@ -718,7 +695,7 @@ def get_groupacc_max(min_weight, f_train, f_val, concept,
   print(acc)
   return acc
 
-def visualize_model(logger, x, f_train, topic_vec, graph_save_folder, n_concept, method, topic_model = None, device = None):
+def visualize_model(x, f_train, topic_vec, graph_save_folder, n_concept, method, topic_model = None, device = None):
   x_new = x.swapaxes(1, 3)
   if method == 'BCVAE':
     # some way to get probabilities size, 4, 4, n_concept
@@ -727,16 +704,16 @@ def visualize_model(logger, x, f_train, topic_vec, graph_save_folder, n_concept,
     zs, params = topic_model.encode(f_train.to(device))
     topic_prob = params.select(-1, 0).view(shape[0], shape[2], shape[3], -1).detach().cpu()
   else:
-    logger.info('x_new.shape: ', x_new.shape)
+    print('x_new.shape: ', x_new.shape)
     # VISUALIZE THE NEAREST NEIGHBORS
     f_train_n = f_train[:10000]/(np.linalg.norm(f_train[:10000],axis=3,keepdims=True)+1e-9)
     f_train_n = f_train_n.swapaxes(1, 3)
-    logger.info('f_train_n.shape: ', f_train_n.shape) #100, 4, 4, 64
+    print('f_train_n.shape: ', f_train_n.shape) #100, 4, 4, 64
     topic_vec_n = topic_vec/(np.linalg.norm(topic_vec,axis=0,keepdims=True)+1e-9)
-    logger.info('topic_vec_n.shape: ', topic_vec_n.shape) #64, 5
+    print('topic_vec_n.shape: ', topic_vec_n.shape) #64, 5
     topic_prob = np.dot(f_train_n,topic_vec_n) #100, 4, 4, 5
-    logger.info('topic_prob.shape: ', topic_prob.shape)
-    # raise Exception('end')
+    print('topic_prob.shape: ', topic_prob.shape)
+    raise Exception('end')
   n_size = 4 #the final size
   imgs = []
   for i in range(n_concept):
@@ -754,9 +731,6 @@ def visualize_model(logger, x, f_train, topic_vec, graph_save_folder, n_concept,
           # print(xx)
           aa.append(a)
           bb.append(b)
-          # toy_helper_v2.copy_save_image(x[j_int,:,:,:],f1,f2,a,b)
-      # f = graph_save_folder + 'concept_{}.png'.format(i)
-      # toy_helper_v2.copy_save_image_stacked(xx, f, aa, bb)
       imgs.append(copy_image_stacked(xx, aa, bb))
   img = stack(imgs, 'v')*255
   

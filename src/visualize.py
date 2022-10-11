@@ -14,9 +14,7 @@ from wordcloud import WordCloud, STOPWORDS, ImageColorGenerator
 from matplotlib import pyplot as plt
 import os
 from utils import returnCAM, get_bert_intermediate_output, add_activation_hook, extract_activation_hook
-from tensorflow.keras.datasets import imdb
 from torch.utils.data import TensorDataset, DataLoader
-from tqdm import trange, tqdm
 
 def contains_letters(z):
     return (z.isupper() or z.islower())
@@ -37,7 +35,7 @@ def gradcam_analysis(model, tokenizer, topic_model, f_train, x_train, max_len, s
         word_index["<UNUSED>"] = 3
         index_to_word = { v: k for k, v in word_index.items()}
     nc, n_concepts = topic_model.topic_vector.shape
-    args.logger.info('nc = {} and n_concepts = {}'.format(nc, n_concepts))
+    print('nc = {} and n_concepts = {}'.format(nc, n_concepts))
     #replace the original classifier to a classifier to topics, trained in the topic model
     topic_classifier = nn.Linear(nc, n_concepts, bias = False)
     with torch.no_grad():
@@ -45,12 +43,10 @@ def gradcam_analysis(model, tokenizer, topic_model, f_train, x_train, max_len, s
         topic_classifier.weight = nn.Parameter(topic_vector_n.T, requires_grad = True)
     model.classifier = topic_classifier
     f_train = f_train.squeeze().unsqueeze(-2)
-    args.logger.info('f_train.shape: ', f_train.shape)
-    # 得到softmax weight
-    params = list(model.parameters()) # 将参数变换为列表 按照weights bias 排列 池化无参数
+    print('f_train.shape: ', f_train.shape)
+    params = list(model.parameters()) 
     weight_softmax = np.squeeze(params[-1].data.cpu().numpy()) #use the last one because bias=False in our case
-    args.logger.info('weight_softmax.shape: ', weight_softmax.shape) #4, 100
-    # raise Exception('end')
+    print('weight_softmax.shape: ', weight_softmax.shape) #4, 100
 
     cams = returnCAM(f_train, weight_softmax, range(n_concepts), max_len)
     
@@ -63,15 +59,14 @@ def gradcam_analysis(model, tokenizer, topic_model, f_train, x_train, max_len, s
         tops = 500
         v, i = sub_cams.flatten().topk(tops, largest = True) #largest
         indices = np.array(np.unravel_index(i.numpy(), sub_cams.shape))
-        # print('indices: ', indices)
         words = []
         for i in range(tops):
             try:
                 x = x_train[indices[0][i]][indices[1][i]]
             except:
-                args.logger.info('x_train.shape: ', x_train.shape)
-                prargs.logger.infoint('indices[0][i]: ', indices[0][i])
-                args.logger.info('indices[1][i]: ', indices[1][i])
+                print('x_train.shape: ', x_train.shape)
+                print('indices[0][i]: ', indices[0][i])
+                print('indices[1][i]: ', indices[1][i])
                 raise Exception('end')
             if tokenizer == None:
                 w = index_to_word[x]
@@ -82,7 +77,7 @@ def gradcam_analysis(model, tokenizer, topic_model, f_train, x_train, max_len, s
         try:
             cx = Counter(words)
         except:
-            args.logger.info(words)
+            print(words)
             raise Exception('end')
         if args.visualize_wordcloud:
             if not os.path.exists(f'{args.graph_save_folder}wordclouds_{args.layer_idx}/'):
@@ -94,25 +89,26 @@ def gradcam_analysis(model, tokenizer, topic_model, f_train, x_train, max_len, s
             plt.savefig(f'{args.graph_save_folder}wordclouds_{args.layer_idx}/topic_{c_idx}.png')
         most_occur = cx.most_common(50)
         most_occur = [mo[0] for mo in most_occur]
-        args.logger.info("Concept " + str(c_idx) + " most common words: \n")
-        # write += "Concept " + str(c_idx) + " most common words: \n"
-        args.logger.info(str(most_occur).replace('\'', '').replace('[', '').replace(']', '') + '\n')
-        # write += str(most_occur).replace('\'', '').replace('[', '').replace(']', '') + '\n'
-        args.logger.info("\n\n")
-        # write += '\n\n'
-    # #save the results to a file
-    # text_file = open(save_file, "w")
-    # n = text_file.write(write)
-    # text_file.close()
-    # print('SAVED!')
+        print("Concept " + str(c_idx) + " most common words: \n")
+        write += "Concept " + str(c_idx) + " most common words: \n"
+        print(str(most_occur).replace('\'', '').replace('[', '').replace(']', '') + '\n')
+        write += str(most_occur).replace('\'', '').replace('[', '').replace(']', '') + '\n'
+        print("\n\n")
+        write += '\n\n'
+    #save the results to a file
+    text_file = open(save_file, "w")
+    n = text_file.write(write)
+    text_file.close()
+    print('SAVED!')
 
 def get_exp(i, x_val, y_val, val_mask, t, tokenizer, device, model, explanations):
     x=x_val[i]
     y=y_val[i]
     input_ids = torch.from_numpy(x).unsqueeze(0).to(device)
     attention_mask = val_mask[i].unsqueeze(0).to(device)
-    # generate an explanation for the input
-    # index controls the concept to generate according to
+    # true class is positive - 1
+    true_class = y
+    output = model(input_ids=input_ids, attention_mask=attention_mask)[0]
     expl = explanations.generate_LRP(input_ids=input_ids, attention_mask=attention_mask, start_layer=0, index = t)[0]
     # normalize scores
     expl = (expl - expl.min()) / (expl.max() - expl.min())
@@ -122,20 +118,22 @@ def get_exp(i, x_val, y_val, val_mask, t, tokenizer, device, model, explanations
 def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_masks, args, save_file, device, overall_model = None):
     # change the model to be enabled with relprop
     if not args.divide_bert:
-        if args.dataset == 'news':
-            model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-ag_news').to(device)
-        elif args.dataset == 'yahoo_answers':
-            model = BertForSequenceClassification.from_pretrained('fabriceyhc/bert-base-uncased-yahoo_answers_topics').to(device)
-        else:
-            model = BertForSequenceClassification.from_pretrained(args.model_save_dir).to(device)
+        model = BertForSequenceClassification.from_pretrained(args.model_save_dir).to(device)
     model.eval()
     # write the topic model to a sequential classifier
     linearlayer1 = Linear(768, args.n_concept, bias = False)
-    topic_vector_n = F.normalize(topic_model.topic_vector, dim = 0, p=2).transpose(1,0)
+    if args.overall_method == 'pca':
+        topic_vector_n = torch.from_numpy(topic_model.components_.T)
+    else:
+        topic_vector_n = F.normalize(topic_model.topic_vector, dim = 0, p=2).transpose(1,0)
     linearlayer1.weight = nn.Parameter(topic_vector_n)
 
-    thres = topic_model.thres
-    args.logger.info('thres: ', thres)
+    try:
+        thres = topic_model.thres
+    except:
+        thres = 0.3
+    
+    print('thres: ', thres)
 
     linearlayer2 = Linear(args.n_concept, args.n_concept, bias = True)
     linearlayer2.weight = nn.Parameter(torch.eye(args.n_concept), requires_grad=False)
@@ -157,43 +155,39 @@ def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_
     y_train = torch.from_numpy(y_train).to(device)
     if not args.divide_bert:
         f_train = f_train.to(device)
+        print(f'f_train.shape: {f_train.shape}')
         with torch.no_grad():
-            _, _, _, _, topic_prob_n = topic_model(f_train, 'conceptshap', y_train)
+            _, _, _, _, topic_prob_n, _ = topic_model(f_train, 'conceptshap', y_train)
     else:
-        # print('type(x_train): ', type(x_train))
-        # print('type(y_train): ', type(y_train))
-        # print('type(train_masks): ', type(train_masks))
         train_data = TensorDataset(torch.from_numpy(x_train), y_train, train_masks)
         train_loader = DataLoader(train_data, shuffle=True, batch_size=args.batch_size, drop_last=True)
         topic_prob_n = []
-        add_activation_hook(overall_model, layer_idx=args.layer_idx)
-        for batch in tqdm(train_loader):
+        for batch in train_loader:
             (samples, targets, masks) = batch
-            # print('1samples.shape: ', samples.shape)
+            print('1samples.shape: ', samples.shape)
             samples, targets = get_bert_intermediate_output(overall_model, samples, targets, masks, device)
-            # print('2samples.shape: ', samples.shape)
+            print('2samples.shape: ', samples.shape)
             samples = samples.flatten(start_dim = 0, end_dim = 1)
-            # print('3samples.shape: ', samples.shape)
+            print('3samples.shape: ', samples.shape)
             # pass samples to topic model
-            _, _, _, _, topic_prob = topic_model(samples, 'conceptshap', targets)
+            _, _, _, _, topic_prob, _ = topic_model(samples, 'conceptshap', targets)
             topic_prob_n.append(topic_prob.detach().cpu())
         topic_prob_n = torch.cat(topic_prob_n, dim = 0)
-        args.logger.info('topic_prob_n.shape: ', topic_prob_n.shape)#size*512, 10
+        print('topic_prob_n.shape: ', topic_prob_n.shape)#size*512, 10
     # filter stopwords
     sw = stopwords.words('english') + ['[CLS]', '[UNK]', '[PAD]']
-    # write = ''
+    write = ''
     all_words = []
     for x in x_train:
         all_words += list(tokenizer.convert_ids_to_tokens(x.flatten())) #size*512
-    args.logger.info('len(all_words): ', len(all_words))
+    print('len(all_words): ', len(all_words))
     for i in range(topic_prob_n.shape[1]):
         args.logger.info(f'Doing topic {i}!')
-        # write += f'Topic {i} \n'
-        args.logger.info(f'Topic {i} \n')
+        write += f'Topic {i} \n'
         # instead of most common ones, use the most highlighted ones
         words = []
-        # words = {}
         topic_prob = topic_prob_n[:, i].cpu().detach().numpy()
+        print(f'topic_prob.shape: {topic_prob.shape}')
         topk = topic_prob.argsort()[::-1][:args.topk]
         if args.divide_bert:
             words += [all_words[tk] for tk in topk if all_words[tk] not in sw and only_letters(all_words[tk])]
@@ -207,7 +201,8 @@ def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_
                 else:
                     exp, tokens = get_exp(j, x_train, y_train, train_masks, i, tokenizer, device, model, explanations)
                     exp = exp.cpu().detach().numpy()
-                    valid = np.where(exp>0.7)[0]
+                    # valid = np.where(exp>0.7)[0]
+                    valid = np.argsort(x)[::-1][:3]
                     valid = [tokens[v] for v in valid]
                     words += valid
             words = [w for w in words if w not in sw]
@@ -216,8 +211,7 @@ def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_
             cx = Counter(words)
             most_occur = cx.most_common(50)
             most_occur = [mo[0] for mo in most_occur]
-            # write += ','.join(most_occur) + '\n'
-            args.logger.info(','.join(most_occur) + '\n')
+            write += ','.join(most_occur) + '\n'
         if args.visualize_wordcloud:
             if not os.path.exists(f'{args.graph_save_folder}wordclouds_{args.layer_idx}/'):
                 os.makedirs(f'{args.graph_save_folder}wordclouds_{args.layer_idx}/')
@@ -226,24 +220,21 @@ def bert_topics(model, tokenizer, topic_model, f_train, x_train, y_train, train_
             plt.axis("off")
             plt.imshow(wordcloud, interpolation='bilinear')
             plt.savefig(f'{args.graph_save_folder}wordclouds_{args.layer_idx}/topic_{i}.png')
-    # if args.visualize!=None:
-    #     #save the results to a file
-    #     text_file = open(save_file, "w")
-    #     n = text_file.write(write)
-    #     text_file.close()
-    #     print('SAVED!')
+    if args.visualize!=None:
+        #save the results to a file
+        text_file = open(save_file, "w")
+        n = text_file.write(write)
+        text_file.close()
+        print('SAVED!')
 
-def read_topics(logger, save_file, topk=10):
+def read_topics(save_file, topk=10):
     f = open(save_file, 'r')
     lines = f.readlines()
-    logger.info(f'{len(lines)} lines in total')
+    print(f'{len(lines)} lines in total')
     lines = [lines[i*2+1] for i in range(len(lines)//2)]
     old_lines = [l.split(',') for l in lines]
-    # print('old_lines: ', old_lines)
     lines = []
     for l in old_lines:
         lines.append([w for w in l if only_letters(w)][:topk])
-    # print('lines: ', lines)
-    # raise Exception('end')
-    logger.info(f'{len(lines)} concept keywords extracted')
+    print(f'{len(lines)} concept keywords extracted')
     return lines

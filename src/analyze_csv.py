@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, precision_recall_fscore_support
 import re
+from  nltk.metrics import agreement
+from nltk.metrics.distance import masi_distance
+from nltk.metrics.distance import jaccard_distance
 
 def flat(lst):
     return [item for sublist in lst for item in sublist]
@@ -28,16 +31,40 @@ def order_by_intersection(l1, l2, num = 3):
     l2_new = []
     for (i, l1_i) in enumerate(l1):
         l2_i = l2[i]
+        le = min(len(l1_i), len(l2_i))
         intersection = [ele for ele in l1_i if ele in l2_i]
         intersection.sort()
-        l1_new.append(intersection + [ele for ele in l1_i if ele not in intersection] + ['x']*(num-(len(l1_i))))
-        l2_new.append(intersection + [ele for ele in l2_i if ele not in intersection] + ['x']*(num-(len(l2_i))))
+        l1_new.append(intersection + [ele for ele in l1_i if ele not in intersection] + ['x']*(num-le))
+        l2_new.append(intersection + [ele for ele in l2_i if ele not in intersection] + ['x']*(num-le))
     return l1_new, l2_new
+
+def create_annot(an):
+    """
+    Create frozensets with the unique label
+    or with both labels splitting on pipe.
+    Unique label has to go in a list so that
+    frozenset does not split it into characters.
+    """
+    if "|" in str(an):
+        an = frozenset(an.split("|"))
+    else:
+        # single label has to go in a list
+        # need to cast or not depends on your data
+        an = frozenset([str(int(an))])
+    return an
 
 def cohen_kappa_agreement(l1, l2):
     l1, l2 = order_by_intersection(l1, l2)
-    score = cohen_kappa_score(flat(l1), flat(l2))
-    print(f'COHEN KAPPA Agreement: {score}')
+    data = []
+    for idx in range(len(l1)):
+        data.append(("a1", idx, create_annot('|'.join(l1[idx]))))
+        data.append(("a2", idx, create_annot('|'.join(l2[idx]))))
+        
+    atask = agreement.AnnotationTask(data=data, distance=jaccard_distance)
+    print("Pi: {}".format(atask.pi()))
+    print("Krippendorff's alpha : {}".format(atask.alpha()))
+    print("Cohen's Kappa:", atask.kappa())
+    print("Fleiss's Kappa:", atask.multi_kappa())
 
 def get_top_k_words(df, method, k):
     top_k = []
@@ -53,10 +80,7 @@ def get_top_k_words(df, method, k):
                 dic[t].append(scores[idx])
         for key in dic.keys():
             dic[key] = np.mean(dic[key])
-        # topindices = np.argsort(scores)[::-1][:k]
         sorted_dict = sorted(dic.items(), key=lambda x: x[1], reverse=True)
-        # print('sorted_dict: ', sorted_dict)
-        # top_k.append([tokens[top] for top in topindices])
         topk = [tok[0] for tok in sorted_dict]
         topk = [tok for tok in topk if re.match('.*[a-zA-Z0-9].*', tok)]
         top_k.append(topk[:k])
@@ -68,20 +92,11 @@ def calculate_precision_recall_f1(answer_df, truth_df, k = 6):
     old_answers = [np.unique(answer) for answer in old_answers]
     # do cc first
     topwords_cc = get_top_k_words(truth_df, method = 'cc', k = k)
-    # print('len(topwords_cc): ', len(topwords_cc))
-    # print('len(flat(topwords_cc)): ', len(flat(topwords_cc)))
     answers, topwords_cc = order_by_intersection(old_answers, topwords_cc, num = 6)
-    # print('len(answers): ', len(answers))
-    # print('len(flat(answers)): ', len(flat(answers)))
-    # print('len(topwords_cc): ', len(topwords_cc))
-    # print('len(flat(topwords_cc)): ', len(flat(topwords_cc)))
-    # print('flat(answers): ', flat(answers))
-    # print('flat(topwords_cc): ', flat(topwords_cc))
     ans = precision_recall_fscore_support(flat(answers), flat(topwords_cc), average='micro')
     print(f'For CC, precision: {ans[0]}, recall: {ans[1]}, f-1: {ans[2]}')
     # do baseline
     topwords_cs = get_top_k_words(truth_df, method = 'cs', k = k)
-    # print('flat(topwords_cs): ', flat(topwords_cs))
     answers, topwords_cs = order_by_intersection(old_answers, topwords_cs, num = 6)
     ans = precision_recall_fscore_support(flat(answers), flat(topwords_cs), average='weighted')
     print(ans)
@@ -122,61 +137,52 @@ def superset_analysis(answer_df, truth_df):
         # do a unique superset
         answers = np.unique(flat(answers))
         for a in answers:
-            if not pd.isna(a) and a!='nan':
+            if (not pd.isna(a)) and (a!='nan') and (a!='x'):
                 token_idx = [id for id, t in enumerate(tokens) if a.lower().strip() in t.lower()]
                 if len(token_idx)==0:
-                    raise Exception(f'Encountered answer {a} not in list!')
+                    print('a: ', a)
+                    print('a!=\'x\': ', a!='x')
+                    raise Exception(f'Encountered answer {a} not in list {tokens}!')
+                cc_causal.append(np.mean([cc_scores[t] for t in token_idx]))
+                cs_causal.append(np.mean([cs_scores[t] for t in token_idx]))
+    print('cc_causal average: ', np.mean(cc_causal))
+    print('cs_causal average: ', np.mean(cs_causal))
+
+# ANNOTATOR LEVEL ANALYSIS
+def annotator_level(answer_df, truth_df, n):
+    print(f'Number_of_examples: {len(answer_df)}')
+    overall_df = truth_df.join(answer_df)
+    cc_causal = []
+    cs_causal = []
+    for index, row in overall_df.iterrows():
+        tokens = row['text']
+        cc_scores = row['cc_scores']
+        cs_scores = row['cs_scores']
+        answers = row[f'a_{n}']
+        for a in answers:
+            if not pd.isna(a) and a!='nan' and a!='x':
+                token_idx = [id for id, t in enumerate(tokens) if a.lower().strip() in t.lower()]
+                if len(token_idx)==0:
+                    raise Exception(f'Encountered answer {a} not in list {tokens}!')
                 cc_causal.append(np.mean([cc_scores[t] for t in token_idx]))
                 cs_causal.append(np.mean([cs_scores[t] for t in token_idx]))
     print('cc_causal average: ', np.mean(cc_causal))
     print('bs_causal average: ', np.mean(cs_causal))
 
-# ANNOTATOR LEVEL ANALYSIS
-def annotator_level(num, answer_df, truth_df):
-    true_texts = truth_df['text']
-    cc_scores = truth_df['cc_scores']
-    cs_scores = truth_df['cs_scores']
-    for n in range(num):
-        print(f'-----------------ANNOTATOR {n}------------------')
-        answers = answer_df.iloc[n].values[1:]
-        cc_causal = []
-        cs_causal = []
-        for (i, text) in enumerate(true_texts):
-            tokens = text
-            answers_i = answers[i*3:i*3+3]
-            for a in answers_i:
-                if not pd.isna(a):
-                    # if multiple words happen
-                    # strip whitespaces
-                    if not isinstance(a, str):
-                        token_idx = [id for id, t in enumerate(tokens) if str(int(a)).lower().strip() in t.lower()]
-                    else:
-                        token_idx = [id for id, t in enumerate(tokens) if a.lower().strip() in t.lower()]
-                    if len(token_idx)==0:
-                        raise Exception(f'Encountered answer {a} not in list!')
-                    cc_causal.append(np.mean([cc_scores[i][t] for t in token_idx]))
-                    cs_causal.append(np.mean([cs_scores[i][t] for t in token_idx]))
-        print('cc_causal average: ', np.mean(cc_causal))
-        print('cs_causal average: ', np.mean(cs_causal))
-
-answer_df = pd.read_csv('human_eval_examples/answer.csv')
-truth_df = pd.read_csv('human_eval_examples/news/txts/df.csv')[:25]
+answer_df = pd.read_csv('human_eval_examples/answer_all_ordered.csv')
+truth_df = pd.read_csv('human_eval_examples/news/txts/df.csv')
 truth_df = reprocess_scores(truth_df)
-
-num = len(answer_df.Timestamp.values)
+answer_df = answer_df.drop(columns=['Unnamed: 0'])
+truth_df = truth_df.drop(columns=['Unnamed: 0'])
+num = 2
 print(f'{num} responses:')
 
 correct_df = truth_df.loc[truth_df['ground_truth'] == truth_df['pred']]
 false_df = truth_df.loc[truth_df['ground_truth'] != truth_df['pred']]
 
 # REPROCESS ANSWER_DF 
-dic = {}
-answers = [answer_df.iloc[n].values[1:] for n in range(num)]
-for n in range(num):
-    answers_i = [list(answers[n][i*3:i*3+3]) for i in range(25)]
-    answers_i = [remove_nan_order(a) for a in answers_i]
-    dic[f'a_{n}'] = answers_i
-answer_df = pd.DataFrame.from_dict(dic)
+answer_df['a_0'] = [a.lower().split(',') for a in list(answer_df['a_0'].values)]
+answer_df['a_1'] = [a.lower().split(',') for a in list(answer_df['a_1'].values)]
 answer_correct_df = answer_df.loc[truth_df['ground_truth'] == truth_df['pred']]
 answer_false_df = answer_df.loc[truth_df['ground_truth'] != truth_df['pred']]
 
@@ -202,3 +208,10 @@ print('Overall:')
 superset_analysis(answer_df, truth_df)
 calculate_agreement_macro(answer_df)
 cohen_kappa_agreement(list(answer_df['a_0'].values), list(answer_df['a_1'].values))
+
+print(f'-----------------SUPERSET ANALYSIS CORRECT------------------')
+print('Overall:')
+print(f'-----------------ANNOTATOR 0------------------')
+annotator_level(answer_df, truth_df, 0)
+print(f'-----------------ANNOTATOR 1------------------')
+annotator_level(answer_df, truth_df, 1)

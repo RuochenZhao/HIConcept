@@ -72,6 +72,22 @@ def no_bpe(tokens, attr_scores, only_delete = False):
                 break
     return tokens, attr_scores
 
+def reprocess_scores(truth_df):
+    all_cc = []
+    for cc_scores in truth_df['cc_scores'].values:
+        all_cc.append(np.array([float(x) for x in cc_scores.replace('[', '').replace(']', '').split(',')]))
+    all_cs = []
+    for cs_scores in truth_df['cs_scores'].values:
+        all_cs.append([float(x) for x in cs_scores.replace('[', '').replace(']', '').split(',')])
+    all_text = []
+    for text in truth_df['text'].values:
+        all_text.append(text.split(' '))
+    truth_df['cc_scores'] = all_cc
+    truth_df['cs_scores'] = all_cs
+    truth_df['text'] = all_text
+    return truth_df
+
+
 # arguments parser
 parser = argparse.ArgumentParser(description="latentRE")
 parser.add_argument("--dataset", dest="dataset", type=str,
@@ -95,6 +111,7 @@ parser.add_argument("--seed", dest="seed", type=int,
 parser.add_argument('--wordcloud', action = 'store_true')
 parser.add_argument('--txt', action = 'store_true')
 parser.add_argument('--reuse', action = 'store_true')
+parser.add_argument('--method', type = str, default = None)
 # parser.add_argument("--regenerate_topic_words", action = 'store_true')
 
 args = parser.parse_args()
@@ -118,10 +135,11 @@ if args.fast:
     f_val = f_val[:int(args.fast*0.2)]
     pred_val = pred_val[:int(args.fast*0.2)]
 print(os.getcwd())
-graph_save_folder = f'models/{args.dataset}/bert/two_stage/'
-topic_model_cc = torch.load(graph_save_folder + f'topic_model_two_stage_{args.layer_idx}.pkl')
-graph_save_folder = f'models/{args.dataset}/bert/conceptshap/'
-topic_model_cs = torch.load(graph_save_folder + f'topic_model_conceptshap_{args.layer_idx}.pkl')
+if args.dataset == 'news':
+    graph_save_folder = f'models/{args.dataset}/bert/two_stage/'
+    topic_model_cc = torch.load(graph_save_folder + f'two_stage_layer_-1_1.0_1.0_1.0_0.1_0.5.pkl')
+    graph_save_folder = f'models/{args.dataset}/bert/conceptshap/'
+    topic_model_cs = torch.load(graph_save_folder + f'conceptshap_layer_-1_0_0_1.0_0.1_0.5.pkl')
 
 model_cc = new_model(model, topic_model_cc)
 model_cs = new_model(model, topic_model_cs)
@@ -136,17 +154,69 @@ else:
 #randomly select some examples 
 args.model_name = 'bert'
 tokenizer, (x_train, y_train), (x_val, y_val), (train_masks, val_masks) = load_data_text(args)
+
 pred_val = pred_val.argmax(1).numpy()
-# false_predictions = np.argwhere(np.array([pred_val[i] == y_val[i] for i in range(len(pred_val))])==False).flatten()
-false_predictions = range(len(pred_val))
+# false_predictions = range(len(pred_val)) #changed to be everything
+false_predictions = [i for i in range(len(pred_val)) if (y_val[i]!=pred_val[i] and y_val[i]==0)]
+print('len(false_predictions): ', len(false_predictions))
+# raise Exception('end')
 print('len(pred_val): ', len(pred_val))
 if args.reuse:
-    df = pd.read_csv('../human_eval_examples/news/txts/df.csv')
-    samples_to_visualize = list(df['sample'].values)
+    print('REUSING!!')
+    # df = pd.read_csv('human_eval_examples/news/txts/df.csv')
+    df = pd.read_csv('human_eval_examples/news/txts/df_new.csv')
+    print(f'df.head(): {df.head()}')
+    # df1 = pd.read_csv('human_eval_examples/news/txts/df_0_50.csv')
+    # df2 = pd.read_csv('human_eval_examples/news/txts/df_50_100.csv')
+    # df = df1.append(df2)
+    samples_to_visualize = list(df[df['ground_truth'] != df['pred']]['sample'].values)
+    print('samples_to_visualize: ', samples_to_visualize)
+    examples_save_dir = f'human_eval_examples/{args.dataset}/{args.method}/'
+    Path(examples_save_dir).mkdir(parents=True, exist_ok=True)
+    # first delete everything inside the saved folder
+    [f.unlink() for f in Path(examples_save_dir).glob("*") if f.is_file()] 
+    if args.method!=None:
+        df = reprocess_scores(df)
+        # # read in topic keywords
+        # save_file = f'models/{args.dataset}/{args.model_name}/conceptshap/topics_conceptshap_{args.layer_idx}.txt'
+        # topic_keywords_cs = read_topics(save_file)
+        # save_file = f'models/{args.dataset}/{args.model_name}/two_stage/topics_two_stage_{args.layer_idx}.txt'
+        # topic_keywords_cc = read_topics(save_file)
+        if args.method == 'cc':
+            scores = list(df['cc_scores'].values)
+            # topic_keywords = topic_keywords_cc
+        elif args.method == 'cs':
+            scores = list(df['cs_scores'].values)
+            # topic_keywords = topic_keywords_cs
+        # For a single example
+        for i, row in df.iterrows():
+            print('i: ', i)
+            data = ''
+            tokens = row['text']
+            expl = np.array(scores[i])
+            # normalize scores
+            try:
+                expl = (expl - expl.min()) / (expl.max() - expl.min() + 1e-8)
+            except:
+                print(f'expl: {expl}')
+                print(f'expl.min(): {expl.min()}')
+                print(f'expl.max(): {expl.max()}')
+                raise Exception('end')
+            vis_data_records = [visualization.VisualizationDataRecord(
+                                            expl,
+                                            tokens)]
+            fig = visualization.visualize_text(vis_data_records, legend = False)
+            data += fig.data
+            # if args.include_keywords:
+            #     data += f'<h3>Other related keywords to the highlighted ones: </h3> \n <body>{topic_keywords[t]}</body>\n'
+            with open(f"{examples_save_dir}data_{i}.html", "w") as file:
+                file.write(data)
+    raise Exception('finished!')
 else:
     np.random.seed(args.seed)
     # we should only visualize where there're valid highlights
     samples_to_visualize = np.random.choice(false_predictions, size = args.n_samples, replace = False)
+    # samples_to_visualize = [79, 81, 82, 83]
     for (i, s) in enumerate(samples_to_visualize):
         input_ids = torch.from_numpy(x_val[s]).unsqueeze(0).to(device)
         attention_mask = val_masks[s].unsqueeze(0).to(device)
@@ -161,12 +231,23 @@ else:
             valid_choices = [sample for sample in false_predictions if sample not in samples_to_visualize]
             samples_to_visualize[i] = np.random.choice(valid_choices)
             print('...to {}'.format(samples_to_visualize[i]))
+            # samples_to_visualize.remove(samples_to_visualize[i])
             i = i-1 #check again
 
 if args.txt:
-    examples_save_dir = f'../human_eval_examples/{args.dataset}/txts/'
+    examples_save_dir = f'human_eval_examples/{args.dataset}/txts/'
     Path(examples_save_dir).mkdir(parents=True, exist_ok=True)
+    # df1 = pd.read_csv('human_eval_examples/news/txts/df_0_50.csv')
+    # df2 = pd.read_csv('human_eval_examples/news/txts/df_50_100.csv')
+    # df = pd.concat([df1,df2])
+    # samples_to_visualize = list(df['sample'].values)
+    # text = list(df['text'].values)
+    # ground_truth = list(df['ground_truth'].values)
+    # pred = list(df['pred'].values)
+    # dic = {'sample': samples_to_visualize, 'text': text, 'ground_truth': ground_truth, 'pred': pred, 'cc_scores': [], 'cs_scores': []}
+    print(f'samples to visualize: {samples_to_visualize}')
     dic = {'sample': samples_to_visualize, 'text': [], 'ground_truth': [], 'pred': [], 'cc_scores': [], 'cs_scores': []}
+    # dic = {'sample': samples_to_visualize, 'text': [], 'ground_truth': [], 'pred': [], 'cc_scores': [], 'cs_scores': []}
     for (i, sample) in enumerate(samples_to_visualize):
         input_ids = torch.from_numpy(x_val[sample]).unsqueeze(0).to(device)
         old_tokens = tokenizer.convert_ids_to_tokens(input_ids.flatten())
@@ -213,8 +294,14 @@ if args.txt:
                 cs_scores += (score + 1e-8)*(expl + 1e-8)
         dic['cs_scores'].append(','.join(list([str(c) for c in cs_scores])))
     df = pd.DataFrame(dic)
-    df.to_csv(f'{examples_save_dir}df.csv')
+    df.to_csv(f'{examples_save_dir}df_new.csv')
+    print('SAVED!')
 else:
+    # read in topic keywords
+    save_file = f'models/{args.dataset}/{args.model_name}/conceptshap/topics_conceptshap_{args.layer_idx}.txt'
+    topic_keywords_cs = read_topics(save_file)
+    save_file = f'models/{args.dataset}/{args.model_name}/two_stage/topics_two_stage_{args.layer_idx}.txt'
+    topic_keywords_cc = read_topics(save_file)
     # 100 samples
     # split into two groups
     group1_samples = samples_to_visualize[:int(args.n_samples//2)]
@@ -223,7 +310,7 @@ else:
     #FIRST SET: cs - group 1; cc - group 2
     write ='Selected samples: \n'
     # save directory
-    examples_save_dir = f'../human_eval_examples/{args.dataset}/1/'
+    examples_save_dir = f'human_eval_examples/{args.dataset}/1/'
     Path(examples_save_dir).mkdir(parents=True, exist_ok=True)
     # first delete everything inside the saved folder
     [f.unlink() for f in Path(examples_save_dir).glob("*") if f.is_file()] 
@@ -261,11 +348,6 @@ else:
             os.makedirs(f'{examples_save_dir}htmls/')
         with open(f"{examples_save_dir}htmls/samples.txt", "w") as file:
             file.write(write)
-    # read in topic keywords
-    save_file = f'models/{args.dataset}/{args.model_name}/conceptshap/topics_conceptshap_{args.layer_idx}.txt'
-    topic_keywords_cs = read_topics(save_file)
-    save_file = f'models/{args.dataset}/{args.model_name}/two_stage/topics_two_stage_{args.layer_idx}.txt'
-    topic_keywords_cc = read_topics(save_file)
     # For a single example
     for i, sample in enumerate(all_samples_to_visualize):
         print('sample: ', sample)
@@ -321,7 +403,7 @@ else:
     #SECOND SET: cs - group 2; cc - group 1
     write ='Selected samples: \n'
     # save directory
-    examples_save_dir = f'../human_eval_examples/{args.dataset}/2/'
+    examples_save_dir = f'human_eval_examples/{args.dataset}/2/'
     Path(examples_save_dir).mkdir(parents=True, exist_ok=True)
     # first delete everything inside the saved folder
     [f.unlink() for f in Path(examples_save_dir).glob("*") if f.is_file()] 
