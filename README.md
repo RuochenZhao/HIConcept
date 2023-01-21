@@ -1,4 +1,4 @@
-# HEConcept
+# HIConcept
 This is the code repository for paper 'Explaining Language Models’ Predictions with High-Impact Concepts'
 
 Running instructions:
