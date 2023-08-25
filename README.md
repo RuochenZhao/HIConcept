@@ -1,6 +1,9 @@
 # HIConcept
 This is the code repository for paper 'Explaining Language Models’ Predictions with High-Impact Concepts'
 
+The motivation is built on the following causal graph:
+![causal_graph](https://github.com/RuochenZhao/HIConcept/blob/main/causal_graph.png?raw=true)
+
 Running instructions:
 inside src/, use the following running scripts:
 1. For text experiments:
